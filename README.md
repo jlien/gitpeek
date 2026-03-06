@@ -24,14 +24,45 @@ sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
 
 ## Installation
 
-### Run from source
+### macOS
 
+1. Install Rust via [rustup.rs](https://rustup.rs) if you haven't already:
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+
+2. Install Node.js 18+ via [nvm](https://github.com/nvm-sh/nvm) or [nodejs.org](https://nodejs.org).
+
+3. Clone and run:
+   ```bash
+   git clone https://github.com/jlien/gitpeek.git
+   cd gitpeek
+   npm install
+   npm run tauri dev
+   ```
+
+   The first run compiles all Rust dependencies and takes a few minutes. Subsequent runs are much faster.
+
+4. To build a distributable `.app`:
+   ```bash
+   npm run tauri build
+   ```
+   The `.app` bundle will be in `src-tauri/target/release/bundle/macos/`.
+
+> **Note:** macOS may show a "cannot be opened because the developer cannot be verified" warning for release builds since the app is unsigned. To bypass it, right-click the `.app` and choose **Open**, or run `xattr -dr com.apple.quarantine GitPeek.app`.
+
+### Other platforms
+
+**Linux:**
 ```bash
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
 git clone https://github.com/jlien/gitpeek.git
 cd gitpeek
 npm install
 npm run tauri dev
 ```
+
+**Windows:** Install Rust and Node.js, then run `npm install && npm run tauri dev`. No additional system dependencies are required.
 
 ### Build a release binary
 
