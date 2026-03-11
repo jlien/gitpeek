@@ -133,8 +133,8 @@ fn get_file_stats(repo: &Repository, path: &str, staged: bool) -> Result<(usize,
     opts.pathspec(path);
 
     let diff = if staged {
-        let head = repo.head()?.peel_to_tree()?;
-        repo.diff_tree_to_index(Some(&head), None, Some(&mut opts))?
+        let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+        repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))?
     } else {
         repo.diff_index_to_workdir(None, Some(&mut opts))?
     };
@@ -147,30 +147,21 @@ fn get_file_stats(repo: &Repository, path: &str, staged: bool) -> Result<(usize,
 fn get_file_diff(state: State<AppState>, path: String) -> Result<String, String> {
     validate_relative_path(&path)?;
     let repo = get_repo(&state, None)?;
-    
+
     let mut opts = DiffOptions::new();
     opts.pathspec(&path);
 
-    // Try staged diff first, then working directory
-    let diff = {
-        let head = repo.head().and_then(|h| h.peel_to_tree());
-        if let Ok(tree) = head {
-            let staged_diff = repo.diff_tree_to_index(Some(&tree), None, Some(&mut opts));
-            if let Ok(d) = staged_diff {
-                if d.deltas().count() > 0 {
-                    d
-                } else {
-                    repo.diff_index_to_workdir(None, Some(&mut opts))
-                        .map_err(|e| e.to_string())?
-                }
-            } else {
-                repo.diff_index_to_workdir(None, Some(&mut opts))
-                    .map_err(|e| e.to_string())?
-            }
-        } else {
-            repo.diff_index_to_workdir(None, Some(&mut opts))
-                .map_err(|e| e.to_string())?
-        }
+    // Try staged diff first. Pass None tree when HEAD doesn't exist (new repo) so
+    // newly staged files are still shown as all-additions.
+    let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+    let staged_diff = repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))
+        .map_err(|e| e.to_string())?;
+
+    let diff = if staged_diff.deltas().count() > 0 {
+        staged_diff
+    } else {
+        repo.diff_index_to_workdir(None, Some(&mut opts))
+            .map_err(|e| e.to_string())?
     };
 
     let mut diff_text = String::new();
@@ -191,6 +182,26 @@ fn get_file_diff(state: State<AppState>, path: String) -> Result<String, String>
         }
         true
     }).map_err(|e| e.to_string())?;
+
+    // Fallback for untracked files: read the file directly and format as a diff
+    if diff_text.is_empty() {
+        let workdir = repo.workdir().ok_or("No working directory")?;
+        let file_path = workdir.join(&path);
+        if file_path.exists() {
+            let content = std::fs::read_to_string(&file_path)
+                .map_err(|e| format!("Failed to read file: {}", e))?;
+            let line_count = content.lines().count();
+            diff_text.push_str(&format!(
+                "--- /dev/null\n+++ b/{}\n@@ -0,0 +1,{} @@\n",
+                path, line_count
+            ));
+            for line in content.lines() {
+                diff_text.push('+');
+                diff_text.push_str(line);
+                diff_text.push('\n');
+            }
+        }
+    }
 
     Ok(diff_text)
 }
