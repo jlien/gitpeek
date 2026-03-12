@@ -6,8 +6,10 @@
   import python from 'highlight.js/lib/languages/python';
   import ruby from 'highlight.js/lib/languages/ruby';
   import rust from 'highlight.js/lib/languages/rust';
+  import xml from 'highlight.js/lib/languages/xml';
   import 'highlight.js/styles/github-dark.css';
 
+  hljs.registerLanguage('xml', xml);
   hljs.registerLanguage('javascript', javascript);
   hljs.registerLanguage('typescript', typescript);
   hljs.registerLanguage('python', python);
@@ -246,24 +248,19 @@
   let splitViewEl: HTMLDivElement;
   let isDragging = false;
 
-  function startDrag(e: MouseEvent) {
+  function onDividerPointerDown(e: PointerEvent) {
+    (e.currentTarget as HTMLButtonElement).setPointerCapture(e.pointerId);
     isDragging = true;
-    e.preventDefault();
+  }
 
-    function onMove(e: MouseEvent) {
-      if (!splitViewEl) return;
-      const rect = splitViewEl.getBoundingClientRect();
-      splitRatio = Math.min(0.85, Math.max(0.15, (e.clientX - rect.left) / rect.width));
-    }
+  function onDividerPointerMove(e: PointerEvent) {
+    if (!isDragging || !splitViewEl) return;
+    const rect = splitViewEl.getBoundingClientRect();
+    splitRatio = Math.min(0.85, Math.max(0.15, (e.clientX - rect.left) / rect.width));
+  }
 
-    function onUp() {
-      isDragging = false;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    }
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+  function onDividerPointerUp() {
+    isDragging = false;
   }
 </script>
 
@@ -319,7 +316,10 @@
       <button
         class="split-divider"
         class:dragging={isDragging}
-        on:mousedown={startDrag}
+        on:pointerdown={onDividerPointerDown}
+        on:pointermove={onDividerPointerMove}
+        on:pointerup={onDividerPointerUp}
+        on:pointercancel={onDividerPointerUp}
         aria-label="Resize panels"
       ></button>
       <div class="split-container">
@@ -607,12 +607,16 @@
   }
 
   .split-line.left {
-    flex: 0 0 var(--split-left, 50%);
+    flex-grow: 0;
+    flex-shrink: 0;
+    flex-basis: var(--split-left, 50%);
     border-right: 1px solid var(--border-color);
   }
 
   .split-line.right {
-    flex: 1;
+    flex-grow: 1;
+    flex-shrink: 1;
+    flex-basis: 0;
     min-width: 0;
   }
 
