@@ -1,9 +1,23 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import hljs from 'highlight.js/lib/core';
+  import javascript from 'highlight.js/lib/languages/javascript';
+  import typescript from 'highlight.js/lib/languages/typescript';
+  import python from 'highlight.js/lib/languages/python';
+  import ruby from 'highlight.js/lib/languages/ruby';
+  import rust from 'highlight.js/lib/languages/rust';
+  import 'highlight.js/styles/github-dark.css';
+
+  hljs.registerLanguage('javascript', javascript);
+  hljs.registerLanguage('typescript', typescript);
+  hljs.registerLanguage('python', python);
+  hljs.registerLanguage('ruby', ruby);
+  hljs.registerLanguage('rust', rust);
 
   export let diff: string = '';
   export let viewMode: 'split' | 'unified' = 'split';
   export let pendingLines: Set<number> = new Set();
+  export let filePath: string = '';
 
   const dispatch = createEventDispatcher();
 
@@ -59,7 +73,89 @@
     return hunks;
   }
 
+  // ── Syntax highlighting ───────────────────────────────────────────────────
+
+  function getLanguage(path: string): string | null {
+    const ext = path.split('.').pop()?.toLowerCase();
+    switch (ext) {
+      case 'js': case 'jsx': case 'mjs': case 'cjs': return 'javascript';
+      case 'ts': case 'tsx': case 'svelte': return 'typescript';
+      case 'py': case 'pyw': return 'python';
+      case 'rb': return 'ruby';
+      case 'rs': return 'rust';
+      default: return null;
+    }
+  }
+
+  function escapeHtml(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Split highlight.js HTML output by newline while keeping span tags balanced.
+  function splitHighlightedHtml(html: string): string[] {
+    const lines: string[] = [];
+    let current = '';
+    const openTags: string[] = [];
+    const re = /<span[^>]*>|<\/span>|\n|[^<\n]+|<[^>]*>/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = re.exec(html)) !== null) {
+      const token = match[0];
+      if (token === '\n') {
+        lines.push(current + openTags.map(() => '</span>').join(''));
+        current = [...openTags].join('');
+      } else if (token.startsWith('<span')) {
+        openTags.push(token);
+        current += token;
+      } else if (token === '</span>') {
+        openTags.pop();
+        current += token;
+      } else {
+        current += token;
+      }
+    }
+    if (current || openTags.length) {
+      lines.push(current + openTags.map(() => '</span>').join(''));
+    }
+    return lines;
+  }
+
+  // Returns a map of `old:<lineNo>` / `new:<lineNo>` → highlighted HTML per hunk.
+  function computeHighlightMap(hunks: DiffHunk[], lang: string | null): Map<string, string> {
+    if (!lang) return new Map();
+    const map = new Map<string, string>();
+    for (const hunk of hunks) {
+      const codeLines: string[] = [];
+      const keys: string[] = [];
+      for (const line of hunk.lines) {
+        if (line.type === 'context' || line.type === 'add' || line.type === 'delete') {
+          codeLines.push(line.content);
+          const key = line.type === 'delete'
+            ? `old:${line.oldLineNo}`
+            : `new:${line.newLineNo ?? line.oldLineNo}`;
+          keys.push(key);
+        }
+      }
+      if (codeLines.length === 0) continue;
+      const highlighted = hljs.highlight(codeLines.join('\n'), { language: lang, ignoreIllegals: true }).value;
+      const splitLines = splitHighlightedHtml(highlighted);
+      for (let i = 0; i < keys.length; i++) {
+        map.set(keys[i], splitLines[i] ?? escapeHtml(codeLines[i]));
+      }
+    }
+    return map;
+  }
+
   $: hunks = parseDiff(diff);
+  $: highlightMap = computeHighlightMap(hunks, getLanguage(filePath));
+
+  function lineHtml(line: DiffLine): string {
+    if (line.type === 'header' || line.type === 'hunk') return escapeHtml(line.content);
+    const key = line.type === 'delete'
+      ? `old:${line.oldLineNo}`
+      : `new:${line.newLineNo ?? line.oldLineNo}`;
+    return highlightMap.get(key) ?? escapeHtml(line.content);
+  }
 
   function getSplitLines(lines: DiffLine[]): Array<{ left: DiffLine | null; right: DiffLine | null }> {
     const result: Array<{ left: DiffLine | null; right: DiffLine | null }> = [];
@@ -170,7 +266,7 @@
             <span class="prefix">
               {#if line.type === 'add'}+{:else if line.type === 'delete'}-{:else if line.type !== 'hunk' && line.type !== 'header'} {/if}
             </span>
-            <span class="content">{line.content}</span>
+            <span class="content">{@html lineHtml(line)}</span>
           </div>
           {#if activePromptLine === key && key !== undefined}
             <div class="prompt-row">
@@ -205,7 +301,7 @@
                   {#if pair.left.type !== 'hunk' && pair.left.type !== 'header'}
                     <span class="line-no">{pair.left.oldLineNo ?? ''}</span>
                   {/if}
-                  <span class="content">{pair.left.content}</span>
+                  <span class="content">{@html lineHtml(pair.left)}</span>
                 {:else}
                   <span class="line-no"></span>
                   <span class="content"></span>
@@ -232,7 +328,7 @@
                   {#if pair.right.type !== 'hunk' && pair.right.type !== 'header'}
                     <span class="line-no">{pair.right.newLineNo ?? ''}</span>
                   {/if}
-                  <span class="content">{pair.right.content}</span>
+                  <span class="content">{@html lineHtml(pair.right)}</span>
                 {:else}
                   <span class="gutter"></span>
                   <span class="line-no"></span>

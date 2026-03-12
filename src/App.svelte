@@ -188,6 +188,7 @@
             {diff}
             {viewMode}
             {pendingLines}
+            filePath={selectedFile ?? ''}
             on:promptSubmit={handlePromptSubmit}
           />
           {#if showOutput}
