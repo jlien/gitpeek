@@ -239,6 +239,32 @@
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitPrompt(key, hunk);
     if (e.key === 'Escape') cancelPrompt();
   }
+
+  // ── Split view resizing ───────────────────────────────────────────────────
+
+  let splitRatio = 0.5;
+  let splitViewEl: HTMLDivElement;
+  let isDragging = false;
+
+  function startDrag(e: MouseEvent) {
+    isDragging = true;
+    e.preventDefault();
+
+    function onMove(e: MouseEvent) {
+      if (!splitViewEl) return;
+      const rect = splitViewEl.getBoundingClientRect();
+      splitRatio = Math.min(0.85, Math.max(0.15, (e.clientX - rect.left) / rect.width));
+    }
+
+    function onUp() {
+      isDragging = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
 </script>
 
 <div class="diff-viewer" class:split={viewMode === 'split'}>
@@ -289,7 +315,13 @@
       {/each}
     </div>
   {:else}
-    <div class="split-view">
+    <div class="split-view" bind:this={splitViewEl} style="--split-left: {splitRatio * 100}%">
+      <button
+        class="split-divider"
+        class:dragging={isDragging}
+        on:mousedown={startDrag}
+        aria-label="Resize panels"
+      ></button>
       <div class="split-container">
         {#each hunks as hunk}
           {@const splitLines = getSplitLines(hunk.lines)}
@@ -535,6 +567,27 @@
   .split-view {
     display: flex;
     height: 100%;
+    position: relative;
+  }
+
+  .split-divider {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--split-left, 50%) - 3px);
+    width: 6px;
+    cursor: col-resize;
+    z-index: 10;
+    background: transparent;
+    border: none;
+    padding: 0;
+    transition: background 0.15s;
+  }
+
+  .split-divider:hover,
+  .split-divider.dragging {
+    background: var(--accent-blue);
+    opacity: 0.4;
   }
 
   .split-container {
@@ -549,13 +602,18 @@
   }
 
   .split-line {
-    flex: 1;
     display: flex;
     overflow: hidden;
   }
 
   .split-line.left {
+    flex: 0 0 var(--split-left, 50%);
     border-right: 1px solid var(--border-color);
+  }
+
+  .split-line.right {
+    flex: 1;
+    min-width: 0;
   }
 
   .split-line.add {
