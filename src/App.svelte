@@ -8,6 +8,8 @@
   import type { AssistantRun } from './lib/AssistantOutput.svelte';
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import CommitLog from './lib/CommitLog.svelte';
+  import type { CommitInfo } from './lib/CommitLog.svelte';
 
   interface FileChange {
     path: string;
@@ -35,6 +37,13 @@
   let runs: AssistantRun[] = [];
   let nextRunId = 0;
 
+  // Sidebar mode
+  type SidebarMode = 'changes' | 'commits';
+  let sidebarMode: SidebarMode = 'changes';
+  let commits: CommitInfo[] = [];
+  let selectedCommitHash: string | null = null;
+  let commitsLoaded = false;
+
   // pending lines per file: Map<filePath, Set<lineNo>>
   let pendingByFile: Map<string, Set<number>> = new Map();
   $: pendingLines = pendingByFile.get(selectedFile ?? '') ?? new Set<number>();
@@ -42,6 +51,8 @@
   async function loadRepo(path?: string) {
     loading = true;
     error = null;
+    commitsLoaded = false;
+    commits = [];
     try {
       repoInfo = await invoke('get_repo_info', { path });
       await refreshFiles();
@@ -49,6 +60,32 @@
       error = String(e);
     }
     loading = false;
+  }
+
+  async function loadCommits() {
+    if (commitsLoaded) return;
+    try {
+      commits = await invoke('get_commits', { limit: 100 });
+      commitsLoaded = true;
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function switchSidebar(mode: SidebarMode) {
+    sidebarMode = mode;
+    if (mode === 'commits') await loadCommits();
+  }
+
+  async function handleCommitFileSelect(e: CustomEvent<{ hash: string; path: string }>) {
+    const { hash, path } = e.detail;
+    selectedCommitHash = hash;
+    selectedFile = path;
+    try {
+      diff = await invoke('get_commit_file_diff', { hash, path });
+    } catch (err) {
+      diff = `Error loading diff: ${err}`;
+    }
   }
 
   async function refreshFiles() {
@@ -147,13 +184,35 @@
 
   <div class="container">
     <aside class="sidebar">
-      <FileTree
-        {files}
-        {selectedFile}
-        on:select={(e) => selectFile(e.detail)}
-        on:stage={(e) => stageFile(e.detail)}
-        on:unstage={(e) => unstageFile(e.detail)}
-      />
+      <div class="sidebar-tabs">
+        <button
+          class="sidebar-tab"
+          class:active={sidebarMode === 'changes'}
+          on:click={() => switchSidebar('changes')}
+        >Changes</button>
+        <button
+          class="sidebar-tab"
+          class:active={sidebarMode === 'commits'}
+          on:click={() => switchSidebar('commits')}
+        >Log</button>
+      </div>
+
+      {#if sidebarMode === 'changes'}
+        <FileTree
+          {files}
+          {selectedFile}
+          on:select={(e) => selectFile(e.detail)}
+          on:stage={(e) => stageFile(e.detail)}
+          on:unstage={(e) => unstageFile(e.detail)}
+        />
+      {:else}
+        <CommitLog
+          {commits}
+          selectedHash={selectedCommitHash}
+          {selectedFile}
+          on:selectFile={handleCommitFileSelect}
+        />
+      {/if}
     </aside>
 
     <section class="main-content">
@@ -167,7 +226,12 @@
         </div>
       {:else if selectedFile}
         <div class="diff-header">
-          <span class="filename">{selectedFile}</span>
+          <span class="filename">
+            {#if sidebarMode === 'commits' && selectedCommitHash}
+              <span class="commit-ref">{selectedCommitHash.slice(0, 7)}</span>
+            {/if}
+            {selectedFile}
+          </span>
           <div class="view-toggle">
             <button
               class:active={viewMode === 'split'}
@@ -223,6 +287,36 @@
     background: var(--bg-secondary);
     border-right: 1px solid var(--border-color);
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sidebar-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+  }
+
+  .sidebar-tab {
+    flex: 1;
+    padding: 8px 0;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    margin-bottom: -1px;
+  }
+
+  .sidebar-tab:hover {
+    color: var(--text-primary);
+  }
+
+  .sidebar-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent-blue);
   }
 
   .main-content {
@@ -245,6 +339,17 @@
     font-family: var(--font-mono);
     font-size: 14px;
     color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .commit-ref {
+    font-size: 11px;
+    color: var(--accent-blue);
+    background: rgba(88, 166, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
   }
 
   .view-toggle {

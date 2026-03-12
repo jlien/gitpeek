@@ -228,6 +228,114 @@ fn unstage_file(state: State<AppState>, path: String) -> Result<(), String> {
     Ok(())
 }
 
+// ── Commit log ────────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+struct CommitInfo {
+    hash: String,
+    short_hash: String,
+    message: String,
+    author: String,
+    time: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CommitFile {
+    path: String,
+    status: String,
+}
+
+#[tauri::command]
+fn get_commits(state: State<AppState>, limit: usize) -> Result<Vec<CommitInfo>, String> {
+    let repo = get_repo(&state, None)?;
+    let mut revwalk = repo.revwalk().map_err(|e| e.to_string())?;
+    revwalk.push_head().map_err(|e| e.to_string())?;
+    revwalk.set_sorting(git2::Sort::TIME).map_err(|e| e.to_string())?;
+
+    let mut commits = Vec::new();
+    for oid in revwalk.take(limit) {
+        let oid = oid.map_err(|e| e.to_string())?;
+        let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+        let hash = oid.to_string();
+        let short_hash = hash[..7].to_string();
+        commits.push(CommitInfo {
+            short_hash,
+            hash,
+            message: commit.summary().unwrap_or("").to_string(),
+            author: commit.author().name().unwrap_or("").to_string(),
+            time: commit.time().seconds(),
+        });
+    }
+    Ok(commits)
+}
+
+#[tauri::command]
+fn get_commit_files(state: State<AppState>, hash: String) -> Result<Vec<CommitFile>, String> {
+    let repo = get_repo(&state, None)?;
+    let oid = git2::Oid::from_str(&hash).map_err(|e| e.to_string())?;
+    let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+    let tree = commit.tree().map_err(|e| e.to_string())?;
+    let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+
+    let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
+        .map_err(|e| e.to_string())?;
+
+    let mut files = Vec::new();
+    diff.foreach(&mut |delta, _| {
+        let path = delta.new_file().path()
+            .or_else(|| delta.old_file().path())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let status = match delta.status() {
+            git2::Delta::Added => "added",
+            git2::Delta::Deleted => "deleted",
+            git2::Delta::Renamed => "renamed",
+            _ => "modified",
+        };
+        files.push(CommitFile { path, status: status.to_string() });
+        true
+    }, None, None, None).map_err(|e| e.to_string())?;
+
+    Ok(files)
+}
+
+#[tauri::command]
+fn get_commit_file_diff(state: State<AppState>, hash: String, path: String) -> Result<String, String> {
+    validate_relative_path(&path)?;
+    let repo = get_repo(&state, None)?;
+    let oid = git2::Oid::from_str(&hash).map_err(|e| e.to_string())?;
+    let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+    let tree = commit.tree().map_err(|e| e.to_string())?;
+    let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+
+    let mut opts = DiffOptions::new();
+    opts.pathspec(&path);
+
+    let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))
+        .map_err(|e| e.to_string())?;
+
+    let mut diff_text = String::new();
+    diff.print(DiffFormat::Patch, |_delta, _hunk, line| {
+        let prefix = match line.origin() {
+            '+' => "+",
+            '-' => "-",
+            ' ' => " ",
+            '>' => ">",
+            '<' => "<",
+            'F' => "",
+            'H' => "@",
+            _ => "",
+        };
+        diff_text.push_str(prefix);
+        if let Ok(content) = std::str::from_utf8(line.content()) {
+            diff_text.push_str(content);
+        }
+        true
+    }).map_err(|e| e.to_string())?;
+
+    Ok(diff_text)
+}
+
 // ── Assistant config ──────────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -364,6 +472,9 @@ fn main() {
             get_file_diff,
             stage_file,
             unstage_file,
+            get_commits,
+            get_commit_files,
+            get_commit_file_diff,
             get_assistant_config,
             save_assistant_config,
             run_assistant,
