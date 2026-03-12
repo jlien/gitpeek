@@ -97,6 +97,10 @@
     } catch (e) {
       error = String(e);
     }
+    if (commitsLoaded) {
+      commitsLoaded = false;
+      await loadCommits();
+    }
   }
 
   async function selectFile(path: string) {
