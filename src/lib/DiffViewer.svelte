@@ -383,6 +383,7 @@
   .line:hover .prompt-btn,
   .split-line.right:hover .prompt-btn {
     opacity: 1;
+    pointer-events: auto;
   }
 
   .line.add {
@@ -446,6 +447,7 @@
 
   .prompt-btn {
     opacity: 0;
+    pointer-events: none;
     display: flex;
     align-items: center;
     justify-content: center;
