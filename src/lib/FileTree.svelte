@@ -14,6 +14,8 @@
 
   const dispatch = createEventDispatcher();
 
+  let commitMessage = '';
+
   $: stagedFiles = files.filter(f => f.staged);
   $: unstagedFiles = files.filter(f => !f.staged);
 
@@ -142,6 +144,35 @@
       <p>No changes</p>
     </div>
   {/if}
+
+  {#if stagedFiles.length > 0}
+    <div class="commit-area">
+      <textarea
+        class="commit-input"
+        bind:value={commitMessage}
+        placeholder="Commit message…"
+        rows="3"
+        on:keydown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && commitMessage.trim()) {
+            dispatch('commit', commitMessage.trim());
+            commitMessage = '';
+          }
+        }}
+      ></textarea>
+      <button
+        class="commit-btn"
+        disabled={!commitMessage.trim()}
+        on:click={() => {
+          if (commitMessage.trim()) {
+            dispatch('commit', commitMessage.trim());
+            commitMessage = '';
+          }
+        }}
+      >
+        Commit {stagedFiles.length} {stagedFiles.length === 1 ? 'file' : 'files'}
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -264,5 +295,53 @@
     padding: 32px 16px;
     text-align: center;
     color: var(--text-muted);
+  }
+
+  .commit-area {
+    padding: 10px 12px 12px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .commit-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 6px 8px;
+    resize: none;
+    line-height: 1.5;
+  }
+
+  .commit-input:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+  }
+
+  .commit-btn {
+    width: 100%;
+    padding: 6px 12px;
+    background: var(--accent-blue);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .commit-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .commit-btn:not(:disabled):hover {
+    opacity: 0.9;
   }
 </style>

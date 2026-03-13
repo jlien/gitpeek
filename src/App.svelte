@@ -10,6 +10,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import CommitLog from './lib/CommitLog.svelte';
   import type { CommitInfo } from './lib/CommitLog.svelte';
+  import BranchDiff from './lib/BranchDiff.svelte';
 
   interface FileChange {
     path: string;
@@ -38,11 +39,13 @@
   let nextRunId = 0;
 
   // Sidebar mode
-  type SidebarMode = 'changes' | 'commits';
+  type SidebarMode = 'changes' | 'commits' | 'branch';
   let sidebarMode: SidebarMode = 'changes';
   let commits: CommitInfo[] = [];
   let selectedCommitHash: string | null = null;
   let commitsLoaded = false;
+  let branchRefreshTick = 0;
+  let selectedBranchBase: string | null = null;
 
   // pending lines per file: Map<filePath, Set<lineNo>>
   let pendingByFile: Map<string, Set<number>> = new Map();
@@ -88,6 +91,18 @@
     }
   }
 
+  async function handleBranchFileSelect(e: CustomEvent<{ base: string; head: string; path: string }>) {
+    const { base, head, path } = e.detail;
+    selectedBranchBase = base;
+    selectedCommitHash = null;
+    selectedFile = path;
+    try {
+      diff = await invoke('get_branch_file_diff', { base, head, path });
+    } catch (err) {
+      diff = `Error loading diff: ${err}`;
+    }
+  }
+
   async function refreshFiles() {
     try {
       files = await invoke('get_changed_files');
@@ -100,6 +115,9 @@
     if (commitsLoaded) {
       commitsLoaded = false;
       await loadCommits();
+    }
+    if (sidebarMode === 'branch') {
+      branchRefreshTick += 1;
     }
   }
 
@@ -120,6 +138,15 @@
   async function unstageFile(path: string) {
     await invoke('unstage_file', { path });
     await refreshFiles();
+  }
+
+  async function commitStaged(message: string) {
+    try {
+      await invoke('commit_staged', { message });
+      await refreshFiles();
+    } catch (e) {
+      error = String(e);
+    }
   }
 
   async function openFolder() {
@@ -199,6 +226,11 @@
           class:active={sidebarMode === 'commits'}
           on:click={() => switchSidebar('commits')}
         >Log</button>
+        <button
+          class="sidebar-tab"
+          class:active={sidebarMode === 'branch'}
+          on:click={() => switchSidebar('branch')}
+        >Branch</button>
       </div>
 
       {#if sidebarMode === 'changes'}
@@ -208,13 +240,22 @@
           on:select={(e) => selectFile(e.detail)}
           on:stage={(e) => stageFile(e.detail)}
           on:unstage={(e) => unstageFile(e.detail)}
+          on:commit={(e) => commitStaged(e.detail)}
         />
-      {:else}
+      {:else if sidebarMode === 'commits'}
         <CommitLog
           {commits}
           selectedHash={selectedCommitHash}
           {selectedFile}
           on:selectFile={handleCommitFileSelect}
+        />
+      {:else}
+        <BranchDiff
+          currentBranch={repoInfo?.branch ?? ''}
+          {selectedFile}
+          selectedBase={selectedBranchBase}
+          refreshTick={branchRefreshTick}
+          on:selectFile={handleBranchFileSelect}
         />
       {/if}
     </aside>
@@ -233,6 +274,8 @@
           <span class="filename">
             {#if sidebarMode === 'commits' && selectedCommitHash}
               <span class="commit-ref">{selectedCommitHash.slice(0, 7)}</span>
+            {:else if sidebarMode === 'branch' && selectedBranchBase}
+              <span class="commit-ref">{selectedBranchBase}…{repoInfo?.branch}</span>
             {/if}
             {selectedFile}
           </span>

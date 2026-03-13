@@ -228,6 +228,110 @@ fn unstage_file(state: State<AppState>, path: String) -> Result<(), String> {
     Ok(())
 }
 
+// ── Branch diff ───────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+struct BranchFile {
+    path: String,
+    status: String,
+}
+
+/// Diff from the merge-base of `base` and `head` to `head` (equivalent to
+/// `git diff base...head`). Accepts branch short-names or any revspec.
+fn branch_diff_impl<'r>(
+    repo: &'r Repository,
+    base: &str,
+    head: &str,
+    opts: Option<&mut DiffOptions>,
+) -> Result<git2::Diff<'r>, String> {
+    let base_commit = repo
+        .revparse_single(base)
+        .map_err(|e| format!("Cannot find '{}': {}", base, e))?
+        .peel_to_commit()
+        .map_err(|e| format!("Cannot resolve '{}' to commit: {}", base, e))?;
+    let head_commit = repo
+        .revparse_single(head)
+        .map_err(|e| format!("Cannot find '{}': {}", head, e))?
+        .peel_to_commit()
+        .map_err(|e| format!("Cannot resolve '{}' to commit: {}", head, e))?;
+
+    let merge_base_oid = repo
+        .merge_base(base_commit.id(), head_commit.id())
+        .map_err(|e| format!("Cannot find merge base: {}", e))?;
+    let merge_base_tree = repo
+        .find_commit(merge_base_oid)
+        .and_then(|c| c.tree())
+        .map_err(|e| e.to_string())?;
+    let head_tree = head_commit.tree().map_err(|e| e.to_string())?;
+
+    repo.diff_tree_to_tree(Some(&merge_base_tree), Some(&head_tree), opts)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_branch_list(state: State<AppState>) -> Result<Vec<String>, String> {
+    let repo = get_repo(&state, None)?;
+    let mut branches = Vec::new();
+    for branch in repo.branches(Some(git2::BranchType::Local)).map_err(|e| e.to_string())? {
+        let (branch, _) = branch.map_err(|e| e.to_string())?;
+        if let Some(name) = branch.name().map_err(|e| e.to_string())? {
+            branches.push(name.to_string());
+        }
+    }
+    Ok(branches)
+}
+
+#[tauri::command]
+fn get_branch_diff_files(state: State<AppState>, base: String, head: String) -> Result<Vec<BranchFile>, String> {
+    let repo = get_repo(&state, None)?;
+    let diff = branch_diff_impl(&repo, &base, &head, None)?;
+    let mut files = Vec::new();
+    for delta in diff.deltas() {
+        let path = delta.new_file().path()
+            .or_else(|| delta.old_file().path())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let status = match delta.status() {
+            git2::Delta::Added   => "added",
+            git2::Delta::Deleted => "deleted",
+            git2::Delta::Renamed => "renamed",
+            _                    => "modified",
+        };
+        files.push(BranchFile { path, status: status.to_string() });
+    }
+    Ok(files)
+}
+
+#[tauri::command]
+fn get_branch_file_diff(state: State<AppState>, base: String, head: String, path: String) -> Result<String, String> {
+    validate_relative_path(&path)?;
+    let repo = get_repo(&state, None)?;
+    let mut opts = DiffOptions::new();
+    opts.pathspec(&path);
+    let diff = branch_diff_impl(&repo, &base, &head, Some(&mut opts))?;
+
+    let mut diff_text = String::new();
+    diff.print(DiffFormat::Patch, |_delta, _hunk, line| {
+        let prefix = match line.origin() {
+            '+' => "+",
+            '-' => "-",
+            ' ' => " ",
+            '>' => ">",
+            '<' => "<",
+            'F' => "",
+            'H' => "@",
+            _ => "",
+        };
+        diff_text.push_str(prefix);
+        if let Ok(content) = std::str::from_utf8(line.content()) {
+            diff_text.push_str(content);
+        }
+        true
+    }).map_err(|e| e.to_string())?;
+
+    Ok(diff_text)
+}
+
 // ── Commit log ────────────────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
@@ -334,6 +438,42 @@ fn get_commit_file_diff(state: State<AppState>, hash: String, path: String) -> R
     }).map_err(|e| e.to_string())?;
 
     Ok(diff_text)
+}
+
+// ── Commit ────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn commit_staged(state: State<AppState>, message: String) -> Result<String, String> {
+    let msg = message.trim().to_string();
+    if msg.is_empty() {
+        return Err("Commit message cannot be empty".to_string());
+    }
+    let repo = get_repo(&state, None)?;
+
+    // Check there is something staged
+    let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+    let staged_diff = repo
+        .diff_tree_to_index(head_tree.as_ref(), None, None)
+        .map_err(|e| e.to_string())?;
+    if staged_diff.deltas().count() == 0 {
+        return Err("Nothing staged to commit".to_string());
+    }
+
+    let mut index = repo.index().map_err(|e| e.to_string())?;
+    index.read(false).map_err(|e| e.to_string())?;
+    let tree_oid = index.write_tree().map_err(|e| e.to_string())?;
+    let tree = repo.find_tree(tree_oid).map_err(|e| e.to_string())?;
+    let sig = repo.signature().map_err(|e| e.to_string())?;
+
+    let head_commit = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+    let oid = if let Some(ref parent) = head_commit {
+        repo.commit(Some("HEAD"), &sig, &sig, &msg, &tree, &[parent])
+    } else {
+        repo.commit(Some("HEAD"), &sig, &sig, &msg, &tree, &[])
+    }
+    .map_err(|e| e.to_string())?;
+
+    Ok(oid.to_string()[..7].to_string())
 }
 
 // ── Assistant config ──────────────────────────────────────────────────────────
@@ -472,9 +612,13 @@ fn main() {
             get_file_diff,
             stage_file,
             unstage_file,
+            get_branch_list,
+            get_branch_diff_files,
+            get_branch_file_diff,
             get_commits,
             get_commit_files,
             get_commit_file_diff,
+            commit_staged,
             get_assistant_config,
             save_assistant_config,
             run_assistant,
