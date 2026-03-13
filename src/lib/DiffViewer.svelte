@@ -252,6 +252,21 @@
   let splitViewEl: HTMLDivElement;
   let isDragging = false;
 
+  // ── Split column scroll sync ──────────────────────────────────────────────
+
+  let leftColEl: HTMLDivElement;
+  let rightColEl: HTMLDivElement;
+  let isSyncingScroll = false;
+
+  function onColScroll(e: Event, source: 'left' | 'right') {
+    if (isSyncingScroll) return;
+    isSyncingScroll = true;
+    const scrollTop = (e.target as HTMLElement).scrollTop;
+    if (source === 'left') rightColEl.scrollTop = scrollTop;
+    else leftColEl.scrollTop = scrollTop;
+    isSyncingScroll = false;
+  }
+
   // Use a Svelte action so native listeners are attached directly to the node.
   // Svelte still instruments the `splitRatio`/`isDragging` assignments here
   // because they reference component-scope `let` variables.
@@ -343,54 +358,62 @@
         use:resizeHandle
         aria-label="Resize panels"
       ></button>
-      <div class="split-container">
+
+      <!-- Left column -->
+      <div class="split-col left" bind:this={leftColEl} on:scroll={(e) => onColScroll(e, 'left')}>
+        {#each hunks as hunk}
+          {@const splitLines = getSplitLines(hunk.lines)}
+          {#each splitLines as pair}
+            <div class="split-line {pair.left?.type ?? 'empty'}">
+              {#if pair.left}
+                {#if pair.left.type !== 'hunk' && pair.left.type !== 'header'}
+                  <span class="line-no">{pair.left.oldLineNo ?? ''}</span>
+                {/if}
+                <span class="content">{@html lineHtml(pair.left)}</span>
+              {:else}
+                <span class="line-no"></span>
+                <span class="content"></span>
+              {/if}
+            </div>
+          {/each}
+        {/each}
+      </div>
+
+      <!-- Right column -->
+      <div class="split-col right" bind:this={rightColEl} on:scroll={(e) => onColScroll(e, 'right')}>
         {#each hunks as hunk}
           {@const splitLines = getSplitLines(hunk.lines)}
           {#each splitLines as pair}
             {@const rightKey = pair.right ? lineKey(pair.right) : undefined}
-            <div class="split-row"
+            <div
+              class="split-line {pair.right?.type ?? 'empty'}"
+              class:is-pending={rightKey !== undefined && pendingLines.has(rightKey)}
               on:mouseenter={() => { if (rightKey !== undefined) hoveredKey = rightKey; }}
               on:mouseleave={() => { if (rightKey !== undefined && hoveredKey === rightKey) hoveredKey = null; }}
             >
-              <div class="split-line left {pair.left?.type ?? 'empty'}">
-                {#if pair.left}
-                  {#if pair.left.type !== 'hunk' && pair.left.type !== 'header'}
-                    <span class="line-no">{pair.left.oldLineNo ?? ''}</span>
-                  {/if}
-                  <span class="content">{@html lineHtml(pair.left)}</span>
-                {:else}
-                  <span class="line-no"></span>
-                  <span class="content"></span>
-                {/if}
-              </div>
-              <div
-                class="split-line right {pair.right?.type ?? 'empty'}"
-                class:is-pending={rightKey !== undefined && pendingLines.has(rightKey)}
-              >
-                {#if pair.right}
-                  <span class="gutter">
-                    {#if pair.right && isPromptable(pair.right) && rightKey !== undefined}
-                      {#if pendingLines.has(rightKey)}
-                        <span class="pending-dot" title="applying…"></span>
-                      {:else}
-                        <button class="prompt-btn" class:visible={hoveredKey === rightKey} title="Ask assistant" on:click={() => openPrompt(rightKey)}>
-                          <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor">
-                            <path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.457 1.457 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h4.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/>
-                          </svg>
-                        </button>
-                      {/if}
+              {#if pair.right}
+                <span class="gutter">
+                  {#if isPromptable(pair.right) && rightKey !== undefined}
+                    {#if pendingLines.has(rightKey)}
+                      <span class="pending-dot" title="applying…"></span>
+                    {:else}
+                      <button class="prompt-btn" class:visible={hoveredKey === rightKey} title="Ask assistant" on:click={() => openPrompt(rightKey)}>
+                        <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor">
+                          <path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.457 1.457 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h4.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/>
+                        </svg>
+                      </button>
                     {/if}
-                  </span>
-                  {#if pair.right.type !== 'hunk' && pair.right.type !== 'header'}
-                    <span class="line-no">{pair.right.newLineNo ?? ''}</span>
                   {/if}
-                  <span class="content">{@html lineHtml(pair.right)}</span>
-                {:else}
-                  <span class="gutter"></span>
-                  <span class="line-no"></span>
-                  <span class="content"></span>
+                </span>
+                {#if pair.right.type !== 'hunk' && pair.right.type !== 'header'}
+                  <span class="line-no">{pair.right.newLineNo ?? ''}</span>
                 {/if}
-              </div>
+                <span class="content">{@html lineHtml(pair.right)}</span>
+              {:else}
+                <span class="gutter"></span>
+                <span class="line-no"></span>
+                <span class="content"></span>
+              {/if}
             </div>
             {#if activePromptLine === rightKey && rightKey !== undefined}
               <div class="prompt-row split-prompt-row">
@@ -428,6 +451,7 @@
   /* Unified View */
   .unified-view {
     padding: 0;
+    min-width: max-content;
   }
 
   .line {
@@ -615,35 +639,29 @@
     border-left-color: var(--accent-blue);
   }
 
-  .split-container {
-    flex: 1;
+  /* Two-column layout: each column owns its own scroll */
+  .split-col {
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
+    overflow: auto;
   }
 
-  .split-row {
-    display: flex;
-    min-height: 20px;
+  .split-col.left {
+    flex-basis: var(--split-left, 50%);
+    flex-shrink: 0;
+    flex-grow: 0;
+    border-right: 1px solid var(--border-color);
+  }
+
+  .split-col.right {
+    flex: 1;
+    min-width: 0;
   }
 
   .split-line {
     display: flex;
-    overflow: hidden;
-  }
-
-  .split-line.left {
-    flex-grow: 0;
-    flex-shrink: 0;
-    flex-basis: var(--split-left, 50%);
-    border-right: 1px solid var(--border-color);
-  }
-
-  .split-line.right {
-    flex-grow: 1;
-    flex-shrink: 1;
-    flex-basis: 0;
-    min-width: 0;
+    min-height: 20px;
+    min-width: max-content;
   }
 
   .split-line.add {
@@ -679,8 +697,6 @@
     flex: 1;
     padding: 0 8px;
     white-space: pre;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .split-prompt-row {
