@@ -242,25 +242,45 @@
     if (e.key === 'Escape') cancelPrompt();
   }
 
+  // JS-based hover tracking — CSS :hover inside a scroll container doesn't
+  // reliably deactivate in WebKit/Tauri.
+  let hoveredKey: number | null = null;
+
   // ── Split view resizing ───────────────────────────────────────────────────
 
   let splitRatio = 0.5;
   let splitViewEl: HTMLDivElement;
   let isDragging = false;
 
-  function onDividerPointerDown(e: PointerEvent) {
-    (e.currentTarget as HTMLButtonElement).setPointerCapture(e.pointerId);
-    isDragging = true;
-  }
-
-  function onDividerPointerMove(e: PointerEvent) {
-    if (!isDragging || !splitViewEl) return;
-    const rect = splitViewEl.getBoundingClientRect();
-    splitRatio = Math.min(0.85, Math.max(0.15, (e.clientX - rect.left) / rect.width));
-  }
-
-  function onDividerPointerUp() {
-    isDragging = false;
+  // Use a Svelte action so native listeners are attached directly to the node.
+  // Svelte still instruments the `splitRatio`/`isDragging` assignments here
+  // because they reference component-scope `let` variables.
+  function resizeHandle(node: HTMLButtonElement) {
+    function onPointerDown(e: PointerEvent) {
+      e.preventDefault();
+      node.setPointerCapture(e.pointerId);
+      isDragging = true;
+    }
+    function onPointerMove(e: PointerEvent) {
+      if (!isDragging || !splitViewEl) return;
+      const rect = splitViewEl.getBoundingClientRect();
+      splitRatio = Math.min(0.85, Math.max(0.15, (e.clientX - rect.left) / rect.width));
+    }
+    function onPointerUp() {
+      isDragging = false;
+    }
+    node.addEventListener('pointerdown', onPointerDown);
+    node.addEventListener('pointermove', onPointerMove);
+    node.addEventListener('pointerup', onPointerUp);
+    node.addEventListener('pointercancel', onPointerUp);
+    return {
+      destroy() {
+        node.removeEventListener('pointerdown', onPointerDown);
+        node.removeEventListener('pointermove', onPointerMove);
+        node.removeEventListener('pointerup', onPointerUp);
+        node.removeEventListener('pointercancel', onPointerUp);
+      }
+    };
   }
 </script>
 
@@ -270,13 +290,17 @@
       {#each hunks as hunk}
         {#each hunk.lines as line}
           {@const key = lineKey(line)}
-          <div class="line {line.type}" class:is-pending={key !== undefined && pendingLines.has(key)}>
+          <div class="line {line.type}"
+            class:is-pending={key !== undefined && pendingLines.has(key)}
+            on:mouseenter={() => { if (key !== undefined) hoveredKey = key; }}
+            on:mouseleave={() => { if (key !== undefined && hoveredKey === key) hoveredKey = null; }}
+          >
             <span class="gutter">
               {#if isPromptable(line) && key !== undefined}
                 {#if pendingLines.has(key)}
                   <span class="pending-dot" title="applying…"></span>
                 {:else}
-                  <button class="prompt-btn" title="Ask assistant" on:click={() => openPrompt(key)}>
+                  <button class="prompt-btn" class:visible={hoveredKey === key} title="Ask assistant" on:click={() => openPrompt(key)}>
                     <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor">
                       <path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.457 1.457 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h4.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/>
                     </svg>
@@ -316,10 +340,7 @@
       <button
         class="split-divider"
         class:dragging={isDragging}
-        on:pointerdown={onDividerPointerDown}
-        on:pointermove={onDividerPointerMove}
-        on:pointerup={onDividerPointerUp}
-        on:pointercancel={onDividerPointerUp}
+        use:resizeHandle
         aria-label="Resize panels"
       ></button>
       <div class="split-container">
@@ -327,7 +348,10 @@
           {@const splitLines = getSplitLines(hunk.lines)}
           {#each splitLines as pair}
             {@const rightKey = pair.right ? lineKey(pair.right) : undefined}
-            <div class="split-row">
+            <div class="split-row"
+              on:mouseenter={() => { if (rightKey !== undefined) hoveredKey = rightKey; }}
+              on:mouseleave={() => { if (rightKey !== undefined && hoveredKey === rightKey) hoveredKey = null; }}
+            >
               <div class="split-line left {pair.left?.type ?? 'empty'}">
                 {#if pair.left}
                   {#if pair.left.type !== 'hunk' && pair.left.type !== 'header'}
@@ -349,7 +373,7 @@
                       {#if pendingLines.has(rightKey)}
                         <span class="pending-dot" title="applying…"></span>
                       {:else}
-                        <button class="prompt-btn" title="Ask assistant" on:click={() => openPrompt(rightKey)}>
+                        <button class="prompt-btn" class:visible={hoveredKey === rightKey} title="Ask assistant" on:click={() => openPrompt(rightKey)}>
                           <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor">
                             <path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.457 1.457 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h4.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/>
                           </svg>
@@ -410,12 +434,6 @@
     display: flex;
     min-height: 20px;
     position: relative;
-  }
-
-  .line:hover .prompt-btn,
-  .split-line.right:hover .prompt-btn {
-    opacity: 1;
-    pointer-events: auto;
   }
 
   .line.add {
@@ -493,6 +511,11 @@
     transition: opacity 0.1s, color 0.1s;
   }
 
+  .prompt-btn.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .prompt-btn:hover {
     color: var(--accent-blue);
   }
@@ -568,32 +591,35 @@
     display: flex;
     height: 100%;
     position: relative;
+    overflow: hidden;
   }
 
   .split-divider {
     position: absolute;
     top: 0;
     bottom: 0;
-    left: calc(var(--split-left, 50%) - 3px);
-    width: 6px;
+    left: calc(var(--split-left, 50%) - 4px);
+    width: 8px;
     cursor: col-resize;
     z-index: 10;
     background: transparent;
     border: none;
+    border-left: 2px solid transparent;
     padding: 0;
-    transition: background 0.15s;
+    transition: border-color 0.15s, background 0.15s;
   }
 
   .split-divider:hover,
   .split-divider.dragging {
-    background: var(--accent-blue);
-    opacity: 0.4;
+    background: rgba(88, 166, 255, 0.15);
+    border-left-color: var(--accent-blue);
   }
 
   .split-container {
     flex: 1;
     display: flex;
     flex-direction: column;
+    overflow-y: auto;
   }
 
   .split-row {
