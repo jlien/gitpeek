@@ -577,6 +577,7 @@ async fn run_assistant(
     }
     let output = cmd
         .current_dir(&repo_path)
+        .env_remove("CLAUDECODE")
         .output()
         .await
         .map_err(|e| format!("{}\n\nFailed to run `{}`: {}", cmd_display, config.command, e))?;
