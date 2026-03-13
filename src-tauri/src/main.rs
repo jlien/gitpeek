@@ -440,6 +440,24 @@ fn get_commit_file_diff(state: State<AppState>, hash: String, path: String) -> R
     Ok(diff_text)
 }
 
+// ── File line reader (for hunk expansion) ────────────────────────────────────
+
+#[tauri::command]
+fn get_file_lines(state: State<AppState>, path: String, start: usize, end: usize) -> Result<Vec<String>, String> {
+    validate_relative_path(&path)?;
+    let repo = get_repo(&state, None)?;
+    let workdir = repo.workdir().ok_or("No working directory")?;
+    let file_path = workdir.join(&path);
+    let content = std::fs::read_to_string(&file_path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let lines: Vec<String> = content.lines()
+        .enumerate()
+        .filter(|(i, _)| *i + 1 >= start && *i + 1 <= end)
+        .map(|(_, l)| l.to_string())
+        .collect();
+    Ok(lines)
+}
+
 // ── Commit ────────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -619,6 +637,7 @@ fn main() {
             get_commits,
             get_commit_files,
             get_commit_file_diff,
+            get_file_lines,
             commit_staged,
             get_assistant_config,
             save_assistant_config,

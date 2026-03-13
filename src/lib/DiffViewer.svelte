@@ -28,11 +28,16 @@
     content: string;
     oldLineNo?: number;
     newLineNo?: number;
+    preHighlighted?: boolean; // content is already escaped/highlighted HTML
   }
 
   interface DiffHunk {
     header: string;
     lines: DiffLine[];
+    newStart: number;
+    newEnd: number;
+    oldStart: number;
+    oldEnd: number;
   }
 
   function parseDiff(raw: string): DiffHunk[] {
@@ -49,19 +54,23 @@
           oldLine = parseInt(match[1], 10) - 1;
           newLine = parseInt(match[2], 10) - 1;
         }
-        currentHunk = { header: line, lines: [] };
+        currentHunk = { header: line, lines: [], newStart: newLine + 1, newEnd: newLine, oldStart: oldLine + 1, oldEnd: oldLine };
         hunks.push(currentHunk);
         currentHunk.lines.push({ type: 'hunk', content: line });
       } else if (currentHunk) {
         if (line.startsWith('+') && !line.startsWith('+++')) {
           newLine++;
+          currentHunk.newEnd = newLine;
           currentHunk.lines.push({ type: 'add', content: line.slice(1), newLineNo: newLine });
         } else if (line.startsWith('-') && !line.startsWith('---')) {
           oldLine++;
+          currentHunk.oldEnd = oldLine;
           currentHunk.lines.push({ type: 'delete', content: line.slice(1), oldLineNo: oldLine });
         } else if (line.startsWith(' ')) {
           oldLine++;
           newLine++;
+          currentHunk.newEnd = newLine;
+          currentHunk.oldEnd = oldLine;
           currentHunk.lines.push({ type: 'context', content: line.slice(1), oldLineNo: oldLine, newLineNo: newLine });
         } else if (
           line.startsWith('diff ') || line.startsWith('index ') ||
@@ -150,8 +159,55 @@
 
   $: hunks = parseDiff(diff);
   $: highlightMap = computeHighlightMap(hunks, getLanguage(filePath));
+  // Reset expansion state whenever the diff changes
+  $: diff, expandedAbove = new Map<number, DiffLine[]>();
+
+  // ── Hunk expansion ────────────────────────────────────────────────────────
+
+  // Maps hunk index → extra context lines to show above that hunk
+  let expandedAbove = new Map<number, DiffLine[]>();
+
+  async function toggleHunkExpansion(hunkIndex: number) {
+    if (expandedAbove.has(hunkIndex)) {
+      expandedAbove = new Map(expandedAbove);
+      expandedAbove.delete(hunkIndex);
+      return;
+    }
+
+    const hunk = hunks[hunkIndex];
+    const prev = hunkIndex > 0 ? hunks[hunkIndex - 1] : null;
+    const gapStart = prev ? prev.newEnd + 1 : 1;
+    const gapEnd = hunk.newStart - 1;
+    if (gapEnd < gapStart) return; // no gap
+
+    const fetchStart = Math.max(gapStart, gapEnd - 49); // at most 50 lines
+    try {
+      const raw = await invoke<string[]>('get_file_lines', {
+        path: filePath,
+        start: fetchStart,
+        end: gapEnd,
+      });
+      const lang = getLanguage(filePath);
+      let highlighted: string[] = raw.map(escapeHtml);
+      if (lang) {
+        const html = hljs.highlight(raw.join('\n'), { language: lang, ignoreIllegals: true }).value;
+        highlighted = splitHighlightedHtml(html);
+      }
+      const extra: DiffLine[] = raw.map((content, i) => ({
+        type: 'context' as const,
+        content: highlighted[i] ?? escapeHtml(content),
+        oldLineNo: fetchStart + i,
+        newLineNo: fetchStart + i,
+        preHighlighted: true,
+      }));
+      expandedAbove = new Map(expandedAbove).set(hunkIndex, extra);
+    } catch {
+      // file may not exist in workdir (e.g. commit/branch view) — silently ignore
+    }
+  }
 
   function lineHtml(line: DiffLine): string {
+    if (line.preHighlighted) return line.content;
     if (line.type === 'header' || line.type === 'hunk') return escapeHtml(line.content);
     const key = line.type === 'delete'
       ? `old:${line.oldLineNo}`
@@ -302,20 +358,33 @@
 <div class="diff-viewer" class:split={viewMode === 'split'}>
   {#if viewMode === 'unified'}
     <div class="unified-view">
-      {#each hunks as hunk}
+      {#each hunks as hunk, hunkIndex}
+        {#if expandedAbove.has(hunkIndex)}
+          {#each expandedAbove.get(hunkIndex) ?? [] as xline}
+            <div class="line context expanded-line">
+              <span class="gutter"></span>
+              <span class="line-no old">{xline.oldLineNo ?? ''}</span>
+              <span class="line-no new">{xline.newLineNo ?? ''}</span>
+              <span class="prefix"> </span>
+              <span class="content">{@html lineHtml(xline)}</span>
+            </div>
+          {/each}
+        {/if}
         {#each hunk.lines as line}
           {@const key = lineKey(line)}
           <div class="line {line.type}"
             class:is-pending={key !== undefined && pendingLines.has(key)}
+            class:expandable={line.type === 'hunk'}
             on:mouseenter={() => { if (key !== undefined) hoveredKey = key; }}
             on:mouseleave={() => { if (key !== undefined && hoveredKey === key) hoveredKey = null; }}
+            on:click={() => { if (line.type === 'hunk') toggleHunkExpansion(hunkIndex); }}
           >
             <span class="gutter">
               {#if isPromptable(line) && key !== undefined}
                 {#if pendingLines.has(key)}
                   <span class="pending-dot" title="applying…"></span>
                 {:else}
-                  <button class="prompt-btn" class:visible={hoveredKey === key} title="Ask assistant" on:click={() => openPrompt(key)}>
+                  <button class="prompt-btn" class:visible={hoveredKey === key} title="Ask assistant" on:click|stopPropagation={() => openPrompt(key)}>
                     <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor">
                       <path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.457 1.457 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h4.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/>
                     </svg>
@@ -361,10 +430,21 @@
 
       <!-- Left column -->
       <div class="split-col left" bind:this={leftColEl} on:scroll={(e) => onColScroll(e, 'left')}>
-        {#each hunks as hunk}
+        {#each hunks as hunk, hunkIndex}
+          {#if expandedAbove.has(hunkIndex)}
+            {#each expandedAbove.get(hunkIndex) ?? [] as xline}
+              <div class="split-line context expanded-line">
+                <span class="line-no">{xline.oldLineNo ?? ''}</span>
+                <span class="content">{@html lineHtml(xline)}</span>
+              </div>
+            {/each}
+          {/if}
           {@const splitLines = getSplitLines(hunk.lines)}
           {#each splitLines as pair}
-            <div class="split-line {pair.left?.type ?? 'empty'}">
+            <div class="split-line {pair.left?.type ?? 'empty'}"
+              class:expandable={pair.left?.type === 'hunk'}
+              on:click={() => { if (pair.left?.type === 'hunk') toggleHunkExpansion(hunkIndex); }}
+            >
               {#if pair.left}
                 {#if pair.left.type !== 'hunk' && pair.left.type !== 'header'}
                   <span class="line-no">{pair.left.oldLineNo ?? ''}</span>
@@ -381,15 +461,26 @@
 
       <!-- Right column -->
       <div class="split-col right" bind:this={rightColEl} on:scroll={(e) => onColScroll(e, 'right')}>
-        {#each hunks as hunk}
+        {#each hunks as hunk, hunkIndex}
+          {#if expandedAbove.has(hunkIndex)}
+            {#each expandedAbove.get(hunkIndex) ?? [] as xline}
+              <div class="split-line context expanded-line">
+                <span class="gutter"></span>
+                <span class="line-no">{xline.newLineNo ?? ''}</span>
+                <span class="content">{@html lineHtml(xline)}</span>
+              </div>
+            {/each}
+          {/if}
           {@const splitLines = getSplitLines(hunk.lines)}
           {#each splitLines as pair}
             {@const rightKey = pair.right ? lineKey(pair.right) : undefined}
             <div
               class="split-line {pair.right?.type ?? 'empty'}"
               class:is-pending={rightKey !== undefined && pendingLines.has(rightKey)}
+              class:expandable={pair.right?.type === 'hunk'}
               on:mouseenter={() => { if (rightKey !== undefined) hoveredKey = rightKey; }}
               on:mouseleave={() => { if (rightKey !== undefined && hoveredKey === rightKey) hoveredKey = null; }}
+              on:click={() => { if (pair.right?.type === 'hunk') toggleHunkExpansion(hunkIndex); }}
             >
               {#if pair.right}
                 <span class="gutter">
@@ -473,6 +564,19 @@
     color: var(--accent-blue);
     padding: 8px 0;
     margin: 8px 0;
+  }
+
+  .line.expandable {
+    cursor: pointer;
+  }
+
+  .line.expandable:hover {
+    background: rgba(88, 166, 255, 0.2);
+  }
+
+  .expanded-line {
+    border-left: 2px solid var(--border-color);
+    opacity: 0.75;
   }
 
   .line.header {
@@ -680,6 +784,19 @@
   .split-line.header {
     background: rgba(88, 166, 255, 0.1);
     color: var(--accent-blue);
+  }
+
+  .split-line.expandable {
+    cursor: pointer;
+  }
+
+  .split-line.expandable:hover {
+    background: rgba(88, 166, 255, 0.2);
+  }
+
+  .split-line.expanded-line {
+    border-left: 2px solid var(--border-color);
+    opacity: 0.75;
   }
 
   .split-line .line-no {
