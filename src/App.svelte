@@ -195,6 +195,16 @@
     }
   }
 
+  // ── Diff stats ────────────────────────────────────────────────────────────
+  $: diffStats = (() => {
+    let additions = 0, deletions = 0;
+    for (const line of diff.split('\n')) {
+      if (line.startsWith('+') && !line.startsWith('+++')) additions++;
+      else if (line.startsWith('-') && !line.startsWith('---')) deletions++;
+    }
+    return { additions, deletions };
+  })();
+
   // ── Sidebar resize ────────────────────────────────────────────────────────
   let sidebarWidth = 300;
   let isResizing = false;
@@ -307,19 +317,27 @@
             {/if}
             {selectedFile}
           </span>
-          <div class="view-toggle">
-            <button
-              class:active={viewMode === 'split'}
-              on:click={() => viewMode = 'split'}
-            >
-              Split
-            </button>
-            <button
-              class:active={viewMode === 'unified'}
-              on:click={() => viewMode = 'unified'}
-            >
-              Unified
-            </button>
+          <div class="diff-header-right">
+            {#if diffStats.additions > 0 || diffStats.deletions > 0}
+              <span class="diff-stats">
+                {#if diffStats.additions > 0}<span class="stat-add">+{diffStats.additions}</span>{/if}
+                {#if diffStats.deletions > 0}<span class="stat-del">−{diffStats.deletions}</span>{/if}
+              </span>
+            {/if}
+            <div class="view-toggle">
+              <button
+                class:active={viewMode === 'split'}
+                on:click={() => viewMode = 'split'}
+              >
+                Split
+              </button>
+              <button
+                class:active={viewMode === 'unified'}
+                on:click={() => viewMode = 'unified'}
+              >
+                Unified
+              </button>
+            </div>
           </div>
         </div>
         <div class="diff-and-output">
@@ -442,6 +460,28 @@
     background: rgba(88, 166, 255, 0.1);
     padding: 2px 6px;
     border-radius: 4px;
+  }
+
+  .diff-header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .diff-stats {
+    display: flex;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .stat-add {
+    color: var(--accent-green);
+  }
+
+  .stat-del {
+    color: var(--accent-red);
   }
 
   .view-toggle {
