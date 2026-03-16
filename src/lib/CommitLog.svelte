@@ -108,7 +108,7 @@
                   on:click={() => dispatch('selectFile', { hash: commit.hash, path: file.path })}
                 >
                   <span class="status" style="color: {statusColor(file.status)}">{statusIcon(file.status)}</span>
-                  <span class="path">
+                  <span class="path" title={file.path}>
                     <span class="dir">{fileDir(file.path)}</span><span class="name">{fileName(file.path)}</span>
                   </span>
                 </button>

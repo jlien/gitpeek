@@ -69,13 +69,13 @@
           <span class="status" style="color: {getStatusColor(file.status)}">
             {getStatusIcon(file.status)}
           </span>
-          <span class="path">
+          <span class="path" title={file.path}>
             <span class="dir">{getDirectory(file.path)}</span>
             <span class="name">{getFileName(file.path)}</span>
           </span>
           <div class="actions">
-            <button 
-              class="action-btn" 
+            <button
+              class="action-btn"
               title="Unstage"
               on:click|stopPropagation={() => dispatch('unstage', file.path)}
             >
@@ -113,13 +113,13 @@
           <span class="status" style="color: {getStatusColor(file.status)}">
             {getStatusIcon(file.status)}
           </span>
-          <span class="path">
+          <span class="path" title={file.path}>
             <span class="dir">{getDirectory(file.path)}</span>
             <span class="name">{getFileName(file.path)}</span>
           </span>
           <div class="actions">
-            <button 
-              class="action-btn" 
+            <button
+              class="action-btn"
               title="Stage"
               on:click|stopPropagation={() => dispatch('stage', file.path)}
             >

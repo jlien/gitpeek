@@ -195,6 +195,25 @@
     }
   }
 
+  // ── Sidebar resize ────────────────────────────────────────────────────────
+  let sidebarWidth = 300;
+  let isResizing = false;
+
+  function onResizePointerDown(e: PointerEvent) {
+    e.preventDefault();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    isResizing = true;
+  }
+
+  function onResizePointerMove(e: PointerEvent) {
+    if (!isResizing) return;
+    sidebarWidth = Math.min(600, Math.max(160, e.clientX));
+  }
+
+  function onResizePointerUp() {
+    isResizing = false;
+  }
+
   onMount(async () => {
     const lastRepo = await invoke<string | null>('get_last_repo').catch(() => null);
     loadRepo(lastRepo ?? undefined);
@@ -214,7 +233,7 @@
   {/if}
 
   <div class="container">
-    <aside class="sidebar">
+    <aside class="sidebar" style="width: {sidebarWidth}px">
       <div class="sidebar-tabs">
         <button
           class="sidebar-tab"
@@ -258,6 +277,15 @@
           on:selectFile={handleBranchFileSelect}
         />
       {/if}
+
+      <div
+        class="sidebar-resize-handle"
+        class:resizing={isResizing}
+        on:pointerdown={onResizePointerDown}
+        on:pointermove={onResizePointerMove}
+        on:pointerup={onResizePointerUp}
+        on:pointercancel={onResizePointerUp}
+      ></div>
     </aside>
 
     <section class="main-content">
@@ -330,12 +358,29 @@
   }
 
   .sidebar {
-    width: 300px;
     background: var(--bg-secondary);
     border-right: 1px solid var(--border-color);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .sidebar-resize-handle {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+  }
+
+  .sidebar-resize-handle:hover,
+  .sidebar-resize-handle.resizing {
+    background: var(--accent-blue);
+    opacity: 0.5;
   }
 
   .sidebar-tabs {
