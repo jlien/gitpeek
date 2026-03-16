@@ -8,6 +8,7 @@
   import type { AssistantRun } from './lib/AssistantOutput.svelte';
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import CommitLog from './lib/CommitLog.svelte';
   import type { CommitInfo } from './lib/CommitLog.svelte';
   import BranchDiff from './lib/BranchDiff.svelte';
@@ -227,6 +228,10 @@
   onMount(async () => {
     const lastRepo = await invoke<string | null>('get_last_repo').catch(() => null);
     loadRepo(lastRepo ?? undefined);
+
+    const unOpen   = await listen('menu-open', () => openFolder());
+    const unRecent = await listen<string>('menu-open-recent', (e) => loadRepo(e.payload));
+    return () => { unOpen(); unRecent(); };
   });
 </script>
 

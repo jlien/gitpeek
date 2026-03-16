@@ -5,7 +5,8 @@ use git2::{Repository, StatusOptions, DiffOptions, DiffFormat};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
+use tauri::{Emitter, Manager, State};
 
 struct AppState {
     repo_path: Mutex<Option<PathBuf>>,
@@ -53,14 +54,19 @@ fn get_repo(state: &State<AppState>, path: Option<&str>) -> Result<Repository, S
 }
 
 #[tauri::command]
-fn get_repo_info(state: State<AppState>, path: Option<String>) -> Result<RepoInfo, String> {
+fn get_repo_info(app: tauri::AppHandle, state: State<AppState>, path: Option<String>) -> Result<RepoInfo, String> {
     let repo = get_repo(&state, path.as_deref())?;
-    
+
     // Update stored path and persist for next launch
     let workdir = repo.workdir().ok_or("No working directory")?;
     *state.repo_path.lock().unwrap() = Some(workdir.to_path_buf());
+    let workdir_str = workdir.to_string_lossy().to_string();
     if let Ok(dir) = gitpeek_dir() {
-        let _ = std::fs::write(dir.join("last_repo"), workdir.to_string_lossy().as_bytes());
+        let _ = std::fs::write(dir.join("last_repo"), workdir_str.as_bytes());
+    }
+    push_recent_repo(&workdir_str);
+    if let Ok(menu) = build_app_menu(&app) {
+        let _ = app.set_menu(menu);
     }
 
     let head = repo.head().map_err(|e| e.to_string())?;
@@ -619,11 +625,128 @@ async fn run_assistant(
     Ok(log)
 }
 
+// ── Recent repos ──────────────────────────────────────────────────────────────
+
+fn load_recent_repos() -> Vec<String> {
+    let path = match gitpeek_dir().map(|d| d.join("recent_repos.json")) {
+        Ok(p) => p,
+        Err(_) => return vec![],
+    };
+    if !path.exists() { return vec![]; }
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|j| serde_json::from_str(&j).ok())
+        .unwrap_or_default()
+}
+
+fn save_recent_repos(repos: &[String]) {
+    if let Ok(path) = gitpeek_dir().map(|d| d.join("recent_repos.json")) {
+        if let Ok(json) = serde_json::to_string(repos) {
+            let _ = std::fs::write(path, json);
+        }
+    }
+}
+
+fn push_recent_repo(workdir: &str) {
+    let mut repos = load_recent_repos();
+    repos.retain(|r| r != workdir);
+    repos.insert(0, workdir.to_string());
+    repos.truncate(10);
+    save_recent_repos(&repos);
+}
+
+// ── Native menu ───────────────────────────────────────────────────────────────
+
+fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let recent_repos = load_recent_repos();
+
+    // Recent-items must outlive the builder
+    let recent_items: Vec<MenuItem<tauri::Wry>> = if recent_repos.is_empty() {
+        vec![MenuItem::new(app, "No Recent Items", false, None::<&str>)?]
+    } else {
+        recent_repos
+            .iter()
+            .map(|p| {
+                let label = std::path::Path::new(p)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| p.clone());
+                MenuItem::with_id(app, format!("open-recent:{p}"), label, true, None::<&str>)
+            })
+            .collect::<tauri::Result<Vec<_>>>()?
+    };
+
+    let mut recent_builder = SubmenuBuilder::new(app, "Open Recent");
+    for item in &recent_items {
+        recent_builder = recent_builder.item(item);
+    }
+    let open_recent = recent_builder.build()?;
+
+    let file_menu = SubmenuBuilder::new(app, "File")
+        .item(&MenuItem::with_id(app, "file-open", "Open…", true, Some("CmdOrCtrl+O"))?)
+        .item(&open_recent)
+        .separator()
+        .close_window()
+        .build()?;
+
+    let edit_menu = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let app_menu = SubmenuBuilder::new(app, "GitPeek")
+            .about(None)
+            .separator()
+            .services()
+            .separator()
+            .hide()
+            .hide_others()
+            .show_all()
+            .separator()
+            .quit()
+            .build()?;
+        let window_menu = SubmenuBuilder::new(app, "Window")
+            .minimize()
+            .separator()
+            .close_window()
+            .build()?;
+        return MenuBuilder::new(app)
+            .item(&app_menu)
+            .item(&file_menu)
+            .item(&edit_menu)
+            .item(&window_menu)
+            .build();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    MenuBuilder::new(app).item(&file_menu).item(&edit_menu).build()
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             repo_path: Mutex::new(None),
+        })
+        .setup(|app| {
+            let menu = build_app_menu(app.handle())?;
+            app.set_menu(menu)?;
+            app.on_menu_event(|app_handle, event| {
+                let id = event.id().as_ref();
+                if id == "file-open" {
+                    app_handle.emit("menu-open", ()).ok();
+                } else if let Some(path) = id.strip_prefix("open-recent:") {
+                    app_handle.emit("menu-open-recent", path.to_string()).ok();
+                }
+            });
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_repo_info,
