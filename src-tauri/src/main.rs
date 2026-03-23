@@ -575,10 +575,14 @@ async fn run_assistant(
         .clone()
         .ok_or("No repo loaded")?;
 
-    let full_prompt = format!(
-        "In file `{}` at line {}, make the following change: {}\n\nCurrent diff context:\n{}",
-        file_path, line, prompt, diff_context
-    );
+    let full_prompt = if file_path.is_empty() {
+        prompt.clone()
+    } else {
+        format!(
+            "In file `{}` at line {}, make the following change: {}\n\nCurrent diff context:\n{}",
+            file_path, line, prompt, diff_context
+        )
+    };
 
     // Build args list for display and execution
     let mut args: Vec<String> = config.extra_args

@@ -41,6 +41,8 @@
   $: if (!isMarkdown) showMarkdownPreview = false;
   let showConfig = false;
   let showOutput = false;
+  let showAsk = false;
+  let askPrompt = '';
   let runs: AssistantRun[] = [];
   let nextRunId = 0;
 
@@ -163,6 +165,39 @@
     }
   }
 
+  async function handleAskSubmit() {
+    const prompt = askPrompt.trim();
+    if (!prompt) return;
+    showAsk = false;
+    askPrompt = '';
+
+    const runId = nextRunId++;
+    runs = [{ id: runId, file: '(general)', line: 0, prompt, status: 'running', output: '' }, ...runs];
+    showOutput = true;
+
+    try {
+      const output = await invoke<string>('run_assistant', {
+        prompt,
+        filePath: '',
+        line: 0,
+        diffContext: '',
+      });
+      runs = runs.map(r => r.id === runId ? { ...r, status: 'success', output } : r);
+      await refreshFiles();
+    } catch (err) {
+      runs = runs.map(r => r.id === runId ? { ...r, status: 'error', output: String(err) } : r);
+    }
+  }
+
+  function onAskKeydown(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      handleAskSubmit();
+    } else if (e.key === 'Escape') {
+      showAsk = false;
+    }
+  }
+
   async function handlePromptSubmit(
     e: CustomEvent<{ line: number; prompt: string; context: string }>
   ) {
@@ -246,10 +281,36 @@
     on:refresh={refreshFiles}
     on:openFolder={openFolder}
     on:configure={() => showConfig = true}
+    on:ask={() => { showAsk = true; }}
   />
 
   {#if showConfig}
     <AssistantConfig on:close={() => showConfig = false} />
+  {/if}
+
+  {#if showAsk}
+    <div class="ask-backdrop" on:click|self={() => showAsk = false} role="none">
+      <div class="ask-modal">
+        <div class="ask-header">
+          <span>Ask assistant</span>
+          <button class="ask-close" on:click={() => showAsk = false}>✕</button>
+        </div>
+        <textarea
+          class="ask-textarea"
+          bind:value={askPrompt}
+          on:keydown={onAskKeydown}
+          placeholder="Paste feedback or describe a change…"
+          autofocus
+        ></textarea>
+        <div class="ask-footer">
+          <span class="ask-hint">⌘↵ to run</span>
+          <div class="ask-actions">
+            <button on:click={() => showAsk = false}>Cancel</button>
+            <button class="ask-run" on:click={handleAskSubmit} disabled={!askPrompt.trim()}>Run</button>
+          </div>
+        </div>
+      </div>
+    </div>
   {/if}
 
   <div class="container">
@@ -574,5 +635,100 @@
 
   button:hover {
     opacity: 0.9;
+  }
+
+  .ask-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 80px;
+    z-index: 200;
+  }
+
+  .ask-modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    width: 600px;
+    max-width: 90vw;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .ask-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .ask-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 4px;
+    line-height: 1;
+  }
+
+  .ask-textarea {
+    background: var(--bg-primary);
+    border: none;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 14px 16px;
+    resize: none;
+    height: 220px;
+    outline: none;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .ask-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px;
+  }
+
+  .ask-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .ask-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .ask-actions button {
+    padding: 5px 14px;
+    font-size: 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    border-radius: 5px;
+  }
+
+  .ask-run {
+    background: var(--accent-blue) !important;
+    border-color: var(--accent-blue) !important;
+    color: white !important;
+  }
+
+  .ask-run:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 </style>
