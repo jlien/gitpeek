@@ -12,7 +12,7 @@
   }
 
   const presets: Record<string, { command: string; prompt_flag: string; extra_args: string }> = {
-    'claude-code': { command: 'claude', prompt_flag: '-p', extra_args: '--dangerously-skip-permissions' },
+    'claude-code': { command: 'claude', prompt_flag: '-p', extra_args: '--dangerously-skip-permissions --allowedTools Bash,Read,Edit,Write,MultiEdit' },
     'codex':       { command: 'codex',  prompt_flag: '',   extra_args: '' },
     'custom':      { command: '',       prompt_flag: '',   extra_args: '' },
   };
@@ -21,7 +21,7 @@
     assistant_type: 'claude-code',
     command: 'claude',
     prompt_flag: '-p',
-    extra_args: '--dangerously-skip-permissions',
+    extra_args: '--dangerously-skip-permissions --allowedTools Bash,Read,Edit,Write,MultiEdit',
   };
   let saving = false;
   let saveError: string | null = null;
