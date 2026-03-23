@@ -12,6 +12,7 @@
   import CommitLog from './lib/CommitLog.svelte';
   import type { CommitInfo } from './lib/CommitLog.svelte';
   import BranchDiff from './lib/BranchDiff.svelte';
+  import MarkdownPreview from './lib/MarkdownPreview.svelte';
 
   interface FileChange {
     path: string;
@@ -34,6 +35,10 @@
   let loading = true;
   let error: string | null = null;
   let viewMode: 'split' | 'unified' = 'split';
+  let showMarkdownPreview = false;
+
+  $: isMarkdown = selectedFile?.match(/\.mdx?$/i) !== null && selectedFile !== null;
+  $: if (!isMarkdown) showMarkdownPreview = false;
   let showConfig = false;
   let showOutput = false;
   let runs: AssistantRun[] = [];
@@ -329,6 +334,22 @@
                 {#if diffStats.deletions > 0}<span class="stat-del">−{diffStats.deletions}</span>{/if}
               </span>
             {/if}
+            {#if isMarkdown}
+              <div class="view-toggle">
+                <button
+                  class:active={!showMarkdownPreview}
+                  on:click={() => showMarkdownPreview = false}
+                >
+                  Diff
+                </button>
+                <button
+                  class:active={showMarkdownPreview}
+                  on:click={() => showMarkdownPreview = true}
+                >
+                  Preview
+                </button>
+              </div>
+            {/if}
             <div class="view-toggle">
               <button
                 class:active={viewMode === 'split'}
@@ -346,13 +367,17 @@
           </div>
         </div>
         <div class="diff-and-output">
-          <DiffViewer
-            {diff}
-            {viewMode}
-            {pendingLines}
-            filePath={selectedFile ?? ''}
-            on:promptSubmit={handlePromptSubmit}
-          />
+          {#if showMarkdownPreview && isMarkdown}
+            <MarkdownPreview filePath={selectedFile ?? ''} />
+          {:else}
+            <DiffViewer
+              {diff}
+              {viewMode}
+              {pendingLines}
+              filePath={selectedFile ?? ''}
+              on:promptSubmit={handlePromptSubmit}
+            />
+          {/if}
           {#if showOutput}
             <AssistantOutput {runs} on:close={() => showOutput = false} />
           {/if}

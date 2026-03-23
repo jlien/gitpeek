@@ -464,6 +464,16 @@ fn get_file_lines(state: State<AppState>, path: String, start: usize, end: usize
     Ok(lines)
 }
 
+#[tauri::command]
+fn read_file(state: State<AppState>, path: String) -> Result<String, String> {
+    validate_relative_path(&path)?;
+    let repo = get_repo(&state, None)?;
+    let workdir = repo.workdir().ok_or("No working directory")?;
+    let file_path = workdir.join(&path);
+    std::fs::read_to_string(&file_path)
+        .map_err(|e| format!("Failed to read file: {}", e))
+}
+
 // ── Commit ────────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -761,6 +771,7 @@ fn main() {
             get_commit_files,
             get_commit_file_diff,
             get_file_lines,
+            read_file,
             commit_staged,
             get_assistant_config,
             save_assistant_config,
