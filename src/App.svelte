@@ -175,18 +175,36 @@
     runs = [{ id: runId, file: '(general)', line: 0, prompt, status: 'running', output: '' }, ...runs];
     showOutput = true;
 
+    const unlisten = await listen<{ run_id: number; text: string }>('assistant-output', (event) => {
+      if (event.payload.run_id === runId) {
+        runs = runs.map(r => r.id === runId
+          ? { ...r, output: (r.output ? r.output + '\n' : '') + event.payload.text }
+          : r
+        );
+      }
+    });
+
     try {
-      const output = await invoke<string>('run_assistant', {
-        prompt,
-        filePath: '',
-        line: 0,
-        diffContext: '',
-      });
-      runs = runs.map(r => r.id === runId ? { ...r, status: 'success', output } : r);
+      await invoke('run_assistant', { runId, prompt, filePath: '', line: 0, diffContext: '' });
+      runs = runs.map(r => r.id === runId ? { ...r, status: 'success' } : r);
       await refreshFiles();
     } catch (err) {
-      runs = runs.map(r => r.id === runId ? { ...r, status: 'error', output: String(err) } : r);
+      runs = runs.map(r => r.id === runId ? { ...r, status: 'error' } : r);
+    } finally {
+      unlisten();
     }
+  }
+
+  async function handleAssistantSend(e: CustomEvent<{ runId: number; text: string }>) {
+    try {
+      await invoke('send_to_assistant', { runId: e.detail.runId, text: e.detail.text });
+    } catch {}
+  }
+
+  async function handleAssistantStop(e: CustomEvent<{ runId: number }>) {
+    try {
+      await invoke('stop_assistant', { runId: e.detail.runId });
+    } catch {}
   }
 
   function onAskKeydown(e: KeyboardEvent) {
@@ -215,21 +233,26 @@
     existing.add(line);
     pendingByFile = new Map(pendingByFile).set(file, existing);
 
+    const unlisten = await listen<{ run_id: number; text: string }>('assistant-output', (event) => {
+      if (event.payload.run_id === runId) {
+        runs = runs.map(r => r.id === runId
+          ? { ...r, output: (r.output ? r.output + '\n' : '') + event.payload.text }
+          : r
+        );
+      }
+    });
+
     try {
-      const output = await invoke<string>('run_assistant', {
-        prompt,
-        filePath: file,
-        line,
-        diffContext: context,
-      });
-      runs = runs.map(r => r.id === runId ? { ...r, status: 'success', output } : r);
+      await invoke('run_assistant', { runId, prompt, filePath: file, line, diffContext: context });
+      runs = runs.map(r => r.id === runId ? { ...r, status: 'success' } : r);
       await refreshFiles();
       if (files.some(f => f.path === file)) {
         await selectFile(file);
       }
     } catch (err) {
-      runs = runs.map(r => r.id === runId ? { ...r, status: 'error', output: String(err) } : r);
+      runs = runs.map(r => r.id === runId ? { ...r, status: 'error' } : r);
     } finally {
+      unlisten();
       const lines = new Set(pendingByFile.get(file) ?? []);
       lines.delete(line);
       pendingByFile = new Map(pendingByFile).set(file, lines);
@@ -440,7 +463,11 @@
             />
           {/if}
           {#if showOutput}
-            <AssistantOutput {runs} on:close={() => showOutput = false} />
+            <AssistantOutput {runs}
+              on:close={() => showOutput = false}
+              on:send={handleAssistantSend}
+              on:stop={handleAssistantStop}
+            />
           {/if}
         </div>
       {:else}

@@ -3,13 +3,22 @@
 
 use git2::{Repository, StatusOptions, DiffOptions, DiffFormat};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 struct AppState {
     repo_path: Mutex<Option<PathBuf>>,
+    run_inputs: Mutex<HashMap<u32, tokio::sync::mpsc::UnboundedSender<String>>>,
+}
+
+#[derive(Serialize, Clone)]
+struct AssistantOutputEvent {
+    run_id: u32,
+    text: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -560,12 +569,14 @@ fn save_assistant_config(config: AssistantConfig) -> Result<(), String> {
 
 #[tauri::command]
 async fn run_assistant(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
+    run_id: u32,
     prompt: String,
     file_path: String,
     line: usize,
     diff_context: String,
-) -> Result<String, String> {
+) -> Result<(), String> {
     let config = get_assistant_config()?
         .ok_or("No assistant configured. Open settings (⚙) to configure.")?;
     let repo_path = state
@@ -584,59 +595,88 @@ async fn run_assistant(
         )
     };
 
-    // Build args list for display and execution
-    let mut args: Vec<String> = config.extra_args
+    let args: Vec<String> = config.extra_args
         .split_whitespace()
+        .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect();
-    if !config.prompt_flag.is_empty() {
-        args.push(config.prompt_flag.clone());
-    }
-    args.push(full_prompt.clone());
-
-    let repo_name = repo_path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "repo".to_string());
-
-    let cmd_display = format!(
-        "$ {} {}\ncwd: {}",
-        config.command,
-        args.iter()
-            .map(|a| if a.contains(' ') { format!("\"{}\"", a) } else { a.clone() })
-            .collect::<Vec<_>>()
-            .join(" "),
-        repo_name
-    );
 
     let mut cmd = tokio::process::Command::new(&config.command);
     for arg in &args {
         cmd.arg(arg);
     }
-    let output = cmd
+
+    use std::process::Stdio;
+    let mut child = cmd
         .current_dir(&repo_path)
         .env_remove("CLAUDECODE")
-        .output()
-        .await
-        .map_err(|e| format!("{}\n\nFailed to run `{}`: {}", cmd_display, config.command, e))?;
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start `{}`: {}", config.command, e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    // Set up stdin channel so the frontend can send follow-up messages
+    let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    state.run_inputs.lock().unwrap().insert(run_id, stdin_tx.clone());
 
-    let mut log = cmd_display.clone();
-    log.push_str(&format!("\nexit: {}\n", output.status));
-    if !stdout.is_empty() {
-        log.push_str(&format!("\n[stdout]\n{}", stdout));
+    // Send initial prompt immediately
+    let _ = stdin_tx.send(full_prompt);
+
+    // Forward channel messages to subprocess stdin
+    let mut child_stdin = child.stdin.take().unwrap();
+    tokio::spawn(async move {
+        while let Some(text) = stdin_rx.recv().await {
+            let _ = child_stdin.write_all(text.as_bytes()).await;
+            let _ = child_stdin.write_all(b"\n").await;
+            let _ = child_stdin.flush().await;
+        }
+        // Channel closed (run stopped) → stdin EOF → subprocess exits
+    });
+
+    // Stream stdout line-by-line
+    let stdout = child.stdout.take().unwrap();
+    let app2 = app.clone();
+    tokio::spawn(async move {
+        let mut lines = tokio::io::BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            app2.emit("assistant-output", AssistantOutputEvent { run_id, text: line }).ok();
+        }
+    });
+
+    // Stream stderr line-by-line
+    let stderr = child.stderr.take().unwrap();
+    tokio::spawn(async move {
+        let mut lines = tokio::io::BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            app.emit("assistant-output", AssistantOutputEvent { run_id, text: line }).ok();
+        }
+    });
+
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    state.run_inputs.lock().unwrap().remove(&run_id);
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Process exited with {}", status))
     }
-    if !stderr.is_empty() {
-        log.push_str(&format!("\n[stderr]\n{}", stderr));
-    }
+}
 
-    if !output.status.success() {
-        return Err(log);
-    }
+#[tauri::command]
+fn send_to_assistant(state: State<AppState>, run_id: u32, text: String) -> Result<(), String> {
+    let inputs = state.run_inputs.lock().unwrap();
+    inputs
+        .get(&run_id)
+        .ok_or_else(|| "No active run".to_string())?
+        .send(text)
+        .map_err(|e| e.to_string())
+}
 
-    Ok(log)
+#[tauri::command]
+fn stop_assistant(state: State<AppState>, run_id: u32) -> Result<(), String> {
+    state.run_inputs.lock().unwrap().remove(&run_id);
+    Ok(())
 }
 
 // ── Recent repos ──────────────────────────────────────────────────────────────
@@ -748,6 +788,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             repo_path: Mutex::new(None),
+            run_inputs: Mutex::new(HashMap::new()),
         })
         .setup(|app| {
             let menu = build_app_menu(app.handle())?;
@@ -780,6 +821,8 @@ fn main() {
             get_assistant_config,
             save_assistant_config,
             run_assistant,
+            send_to_assistant,
+            stop_assistant,
             get_last_repo,
         ])
         .run(tauri::generate_context!())

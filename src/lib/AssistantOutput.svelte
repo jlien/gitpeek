@@ -14,8 +14,20 @@
 
   const dispatch = createEventDispatcher();
 
+  let inputByRun: Record<number, string> = {};
+
   function fileName(path: string) {
     return path.split('/').pop() ?? path;
+  }
+
+  function handleInputKeydown(e: KeyboardEvent, runId: number) {
+    if (e.key === 'Enter') {
+      const text = (inputByRun[runId] ?? '').trim();
+      if (text) {
+        dispatch('send', { runId, text });
+        inputByRun[runId] = '';
+      }
+    }
   }
 </script>
 
@@ -40,6 +52,18 @@
         <p class="run-prompt">{run.prompt}</p>
         {#if run.output}
           <pre class="run-output">{run.output}</pre>
+        {/if}
+        {#if run.status === 'running'}
+          <div class="run-input-area">
+            <input
+              class="run-input"
+              type="text"
+              bind:value={inputByRun[run.id]}
+              on:keydown={(e) => handleInputKeydown(e, run.id)}
+              placeholder="Reply to assistant…"
+            />
+            <button class="stop-btn" on:click={() => dispatch('stop', { runId: run.id })} title="Stop">◼</button>
+          </div>
         {/if}
       </div>
     {/each}
@@ -168,5 +192,42 @@
     max-height: 300px;
     overflow-y: auto;
     line-height: 1.5;
+  }
+
+  .run-input-area {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  .run-input {
+    flex: 1;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-family: var(--font-mono);
+    padding: 4px 8px;
+    outline: none;
+  }
+
+  .run-input:focus {
+    border-color: var(--accent-blue);
+  }
+
+  .stop-btn {
+    padding: 4px 8px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--accent-red);
+    cursor: pointer;
+    font-size: 10px;
+    line-height: 1;
+  }
+
+  .stop-btn:hover {
+    background: rgba(248, 81, 73, 0.15);
   }
 </style>
