@@ -549,6 +549,7 @@
   .line {
     display: flex;
     min-height: 20px;
+    min-width: 100%;
     position: relative;
   }
 
@@ -766,7 +767,7 @@
   .split-line {
     display: flex;
     min-height: 20px;
-    min-width: max-content;
+    min-width: max(100%, max-content);
   }
 
   .split-line.add {
