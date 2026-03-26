@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
+use base64::{Engine as _, engine::general_purpose};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 struct AppState {
@@ -483,6 +484,16 @@ fn read_file(state: State<AppState>, path: String) -> Result<String, String> {
         .map_err(|e| format!("Failed to read file: {}", e))
 }
 
+#[tauri::command]
+fn read_file_base64(state: State<AppState>, path: String) -> Result<String, String> {
+    validate_relative_path(&path)?;
+    let repo = get_repo(&state, None)?;
+    let workdir = repo.workdir().ok_or("No working directory")?;
+    let bytes = std::fs::read(workdir.join(&path))
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    Ok(general_purpose::STANDARD.encode(&bytes))
+}
+
 // ── Commit ────────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -817,6 +828,7 @@ fn main() {
             get_commit_file_diff,
             get_file_lines,
             read_file,
+            read_file_base64,
             commit_staged,
             get_assistant_config,
             save_assistant_config,

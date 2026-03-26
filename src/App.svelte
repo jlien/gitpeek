@@ -13,6 +13,7 @@
   import type { CommitInfo } from './lib/CommitLog.svelte';
   import BranchDiff from './lib/BranchDiff.svelte';
   import MarkdownPreview from './lib/MarkdownPreview.svelte';
+  import ImagePreview from './lib/ImagePreview.svelte';
 
   interface FileChange {
     path: string;
@@ -37,8 +38,9 @@
   let viewMode: 'split' | 'unified' = 'split';
   let showMarkdownPreview = false;
 
-  $: isMarkdown = selectedFile?.match(/\.mdx?$/i) !== null && selectedFile !== null;
-  $: if (!isMarkdown) showMarkdownPreview = false;
+  $: isMarkdown = selectedFile !== null && /\.mdx?$/i.test(selectedFile ?? '');
+  $: isImage = selectedFile !== null && /\.(png|jpe?g|gif|webp|svg|bmp|ico|tiff?|avif)$/i.test(selectedFile ?? '');
+  $: if (!isMarkdown && !isImage) showMarkdownPreview = false;
   let showConfig = false;
   let showOutput = false;
   let showAsk = false;
@@ -418,7 +420,7 @@
                 {#if diffStats.deletions > 0}<span class="stat-del">−{diffStats.deletions}</span>{/if}
               </span>
             {/if}
-            {#if isMarkdown}
+            {#if isMarkdown || isImage}
               <div class="view-toggle">
                 <button
                   class:active={!showMarkdownPreview}
@@ -451,7 +453,9 @@
           </div>
         </div>
         <div class="diff-and-output">
-          {#if showMarkdownPreview && isMarkdown}
+          {#if showMarkdownPreview && isImage}
+            <ImagePreview filePath={selectedFile ?? ''} />
+          {:else if showMarkdownPreview && isMarkdown}
             <MarkdownPreview filePath={selectedFile ?? ''} />
           {:else}
             <DiffViewer
