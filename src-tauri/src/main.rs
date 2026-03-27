@@ -627,35 +627,30 @@ async fn run_assistant(
     }
 
     use std::process::Stdio;
+    let stdin_cfg = if use_stdin_prompt { Stdio::piped() } else { Stdio::null() };
     let mut child = cmd
         .current_dir(&repo_path)
         .env_remove("CLAUDECODE")
-        .stdin(Stdio::piped())
+        .stdin(stdin_cfg)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to start `{}`: {}", config.command, e))?;
 
-    // Set up stdin channel so the frontend can send follow-up messages
-    let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    state.run_inputs.lock().unwrap().insert(run_id, stdin_tx.clone());
-
-    // In stdin-prompt mode, send the initial prompt now; otherwise the CLI arg
-    // already carries it and stdin is only used for follow-ups.
+    // In interactive (no -p) mode: keep stdin open for follow-up messages.
     if use_stdin_prompt {
+        let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        state.run_inputs.lock().unwrap().insert(run_id, stdin_tx.clone());
         let _ = stdin_tx.send(full_prompt);
+        let mut child_stdin = child.stdin.take().unwrap();
+        tokio::spawn(async move {
+            while let Some(text) = stdin_rx.recv().await {
+                let _ = child_stdin.write_all(text.as_bytes()).await;
+                let _ = child_stdin.write_all(b"\n").await;
+                let _ = child_stdin.flush().await;
+            }
+        });
     }
-
-    // Forward channel messages to subprocess stdin
-    let mut child_stdin = child.stdin.take().unwrap();
-    tokio::spawn(async move {
-        while let Some(text) = stdin_rx.recv().await {
-            let _ = child_stdin.write_all(text.as_bytes()).await;
-            let _ = child_stdin.write_all(b"\n").await;
-            let _ = child_stdin.flush().await;
-        }
-        // Channel closed (run stopped or -p process exited) → stdin EOF
-    });
 
     // Stream stdout line-by-line
     let stdout = child.stdout.take().unwrap();
