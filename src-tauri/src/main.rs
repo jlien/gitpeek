@@ -606,11 +606,20 @@ async fn run_assistant(
         )
     };
 
-    let args: Vec<String> = config.extra_args
+    let mut args: Vec<String> = config.extra_args
         .split_whitespace()
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect();
+
+    // If a prompt flag is configured (e.g. -p), pass the prompt as a CLI arg
+    // (headless single-turn mode). Otherwise the prompt is sent via stdin so
+    // the process can stay alive for follow-up messages.
+    let use_stdin_prompt = config.prompt_flag.is_empty();
+    if !use_stdin_prompt {
+        args.push(config.prompt_flag.clone());
+        args.push(full_prompt.clone());
+    }
 
     let mut cmd = tokio::process::Command::new(&config.command);
     for arg in &args {
@@ -631,8 +640,11 @@ async fn run_assistant(
     let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     state.run_inputs.lock().unwrap().insert(run_id, stdin_tx.clone());
 
-    // Send initial prompt immediately
-    let _ = stdin_tx.send(full_prompt);
+    // In stdin-prompt mode, send the initial prompt now; otherwise the CLI arg
+    // already carries it and stdin is only used for follow-ups.
+    if use_stdin_prompt {
+        let _ = stdin_tx.send(full_prompt);
+    }
 
     // Forward channel messages to subprocess stdin
     let mut child_stdin = child.stdin.take().unwrap();
@@ -642,7 +654,7 @@ async fn run_assistant(
             let _ = child_stdin.write_all(b"\n").await;
             let _ = child_stdin.flush().await;
         }
-        // Channel closed (run stopped) → stdin EOF → subprocess exits
+        // Channel closed (run stopped or -p process exited) → stdin EOF
     });
 
     // Stream stdout line-by-line
