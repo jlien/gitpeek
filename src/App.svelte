@@ -36,6 +36,10 @@
   let loading = true;
   let error: string | null = null;
   let viewMode: 'split' | 'unified' = 'split';
+
+  function defaultViewMode(d: string): 'split' | 'unified' {
+    return d.includes('--- /dev/null') ? 'unified' : 'split';
+  }
   let showMarkdownPreview = false;
 
   $: isMarkdown = selectedFile !== null && /\.mdx?$/i.test(selectedFile ?? '');
@@ -96,6 +100,7 @@
     selectedFile = path;
     try {
       diff = await invoke('get_commit_file_diff', { hash, path });
+      viewMode = defaultViewMode(diff);
     } catch (err) {
       diff = `Error loading diff: ${err}`;
     }
@@ -108,6 +113,7 @@
     selectedFile = path;
     try {
       diff = await invoke('get_branch_file_diff', { base, head, path });
+      viewMode = defaultViewMode(diff);
     } catch (err) {
       diff = `Error loading diff: ${err}`;
     }
@@ -135,6 +141,7 @@
     selectedFile = path;
     try {
       diff = await invoke('get_file_diff', { path });
+      viewMode = defaultViewMode(diff);
     } catch (e) {
       diff = `Error loading diff: ${e}`;
     }
