@@ -95,6 +95,7 @@
       case 'py': case 'pyw': return 'python';
       case 'rb': return 'ruby';
       case 'rs': return 'rust';
+      case 'html': case 'htm': case 'erb': return 'xml';
       default: return null;
     }
   }
