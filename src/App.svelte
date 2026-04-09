@@ -30,6 +30,7 @@
   }
 
   let repoInfo: RepoInfo | null = null;
+  let branches: string[] = [];
   let files: FileChange[] = [];
   let selectedFile: string | null = null;
   let diff: string = '';
@@ -72,11 +73,22 @@
     commits = [];
     try {
       repoInfo = await invoke('get_repo_info', { path });
+      branches = await invoke('get_branch_list');
       await refreshFiles();
     } catch (e) {
       error = String(e);
     }
     loading = false;
+  }
+
+  async function handleCheckout(e: CustomEvent<string>) {
+    const branch = e.detail;
+    try {
+      await invoke('checkout_branch', { branch });
+      await loadRepo();
+    } catch (err) {
+      error = String(err);
+    }
   }
 
   async function loadCommits() {
@@ -310,10 +322,12 @@
 <main>
   <Header
     {repoInfo}
+    {branches}
     on:refresh={refreshFiles}
     on:openFolder={openFolder}
     on:configure={() => showConfig = true}
     on:ask={() => { showAsk = true; }}
+    on:checkout={handleCheckout}
   />
 
   {#if showConfig}

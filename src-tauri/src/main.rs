@@ -298,6 +298,18 @@ fn get_branch_list(state: State<AppState>) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+fn checkout_branch(state: State<AppState>, branch: String) -> Result<(), String> {
+    let repo = get_repo(&state, None)?;
+    let obj = repo
+        .revparse_single(&format!("refs/heads/{}", branch))
+        .map_err(|e| format!("Branch '{}' not found: {}", branch, e))?;
+    repo.checkout_tree(&obj, None).map_err(|e| e.to_string())?;
+    repo.set_head(&format!("refs/heads/{}", branch))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn get_branch_diff_files(state: State<AppState>, base: String, head: String) -> Result<Vec<BranchFile>, String> {
     let repo = get_repo(&state, None)?;
     let diff = branch_diff_impl(&repo, &base, &head, None)?;
@@ -828,6 +840,7 @@ fn main() {
             stage_file,
             unstage_file,
             get_branch_list,
+            checkout_branch,
             get_branch_diff_files,
             get_branch_file_diff,
             get_commits,

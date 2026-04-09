@@ -2,8 +2,20 @@
   import { createEventDispatcher } from 'svelte';
 
   export let repoInfo: { path: string; branch: string; remote: string | null } | null = null;
+  export let branches: string[] = [];
 
   const dispatch = createEventDispatcher();
+
+  let showBranchMenu = false;
+
+  function onBranchSelect(b: string) {
+    showBranchMenu = false;
+    if (b !== repoInfo?.branch) dispatch('checkout', b);
+  }
+
+  function onBranchKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') showBranchMenu = false;
+  }
 </script>
 
 <header>
@@ -14,12 +26,37 @@
       <span class="repo-path" title={repoInfo.path}>
         {repoInfo.path.split('/').slice(-2).join('/')}
       </span>
-      <span class="branch">
-        <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
-          <path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.5 2.5 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Z"/>
-        </svg>
-        {repoInfo.branch}
-      </span>
+      <div class="branch-wrap" on:keydown={onBranchKeydown}>
+        <button
+          class="branch"
+          class:open={showBranchMenu}
+          on:click={() => showBranchMenu = !showBranchMenu}
+          title="Switch branch"
+        >
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+            <path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.5 2.5 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Z"/>
+          </svg>
+          {repoInfo.branch}
+          <svg class="caret" viewBox="0 0 16 16" width="10" height="10" fill="currentColor">
+            <path d="m4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z"/>
+          </svg>
+        </button>
+        {#if showBranchMenu && branches.length > 0}
+          <!-- svelte-ignore a11y-click-events-have-key-events -->
+          <div class="branch-backdrop" on:click={() => showBranchMenu = false} role="none"></div>
+          <div class="branch-menu" role="listbox">
+            {#each branches as b}
+              <button
+                class="branch-option"
+                class:current={b === repoInfo?.branch}
+                role="option"
+                aria-selected={b === repoInfo?.branch}
+                on:click={() => onBranchSelect(b)}
+              >{b}</button>
+            {/each}
+          </div>
+        {/if}
+      </div>
     {/if}
   </div>
   
@@ -82,15 +119,76 @@
     white-space: nowrap;
   }
 
+  .branch-wrap {
+    position: relative;
+  }
+
   .branch {
     display: flex;
     align-items: center;
     gap: 4px;
     padding: 2px 8px;
     background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     font-size: 12px;
     color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .branch:hover,
+  .branch.open {
+    color: var(--text-primary);
+    border-color: var(--accent-blue);
+  }
+
+  .caret {
+    opacity: 0.6;
+  }
+
+  .branch-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 49;
+  }
+
+  .branch-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 50;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    min-width: 160px;
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 4px;
+  }
+
+  .branch-option {
+    display: block;
+    width: 100%;
+    padding: 5px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .branch-option:hover {
+    background: var(--bg-tertiary);
+  }
+
+  .branch-option.current {
+    color: var(--accent-blue);
+    font-weight: 600;
   }
 
   .right {
