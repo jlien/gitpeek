@@ -2,19 +2,33 @@
   import { createEventDispatcher } from 'svelte';
 
   export let repoInfo: { path: string; branch: string; remote: string | null } | null = null;
-  export let branches: string[] = [];
+  export let branches: { name: string; remote: string | null }[] = [];
 
   const dispatch = createEventDispatcher();
 
   let showBranchMenu = false;
+  let fetching = false;
 
-  function onBranchSelect(b: string) {
+  $: localBranches = branches.filter(b => !b.remote);
+  $: remoteBranches = branches.filter(b => !!b.remote);
+
+  function onBranchSelect(b: { name: string; remote: string | null }) {
     showBranchMenu = false;
-    if (b !== repoInfo?.branch) dispatch('checkout', b);
+    if (b.remote || b.name !== repoInfo?.branch) {
+      dispatch('checkout', { branch: b.name, remote: b.remote ?? undefined });
+    }
   }
 
   function onBranchKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') showBranchMenu = false;
+  }
+
+  async function onFetch() {
+    fetching = true;
+    dispatch('fetch');
+    // parent will reload branches; just show spinner briefly
+    await new Promise(r => setTimeout(r, 300));
+    fetching = false;
   }
 </script>
 
@@ -45,15 +59,37 @@
           <!-- svelte-ignore a11y-click-events-have-key-events -->
           <div class="branch-backdrop" on:click={() => showBranchMenu = false} role="none"></div>
           <div class="branch-menu" role="listbox">
-            {#each branches as b}
-              <button
-                class="branch-option"
-                class:current={b === repoInfo?.branch}
-                role="option"
-                aria-selected={b === repoInfo?.branch}
-                on:click={() => onBranchSelect(b)}
-              >{b}</button>
-            {/each}
+            <button class="fetch-btn" on:click={onFetch} disabled={fetching}>
+              {#if fetching}
+                Fetching…
+              {:else}
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5ZM1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834Z"/></svg>
+                Fetch
+              {/if}
+            </button>
+            {#if localBranches.length > 0}
+              <div class="branch-group-label">Local</div>
+              {#each localBranches as b}
+                <button
+                  class="branch-option"
+                  class:current={b.name === repoInfo?.branch}
+                  role="option"
+                  aria-selected={b.name === repoInfo?.branch}
+                  on:click={() => onBranchSelect(b)}
+                >{b.name}</button>
+              {/each}
+            {/if}
+            {#if remoteBranches.length > 0}
+              <div class="branch-group-label">Remote</div>
+              {#each remoteBranches as b}
+                <button
+                  class="branch-option remote"
+                  role="option"
+                  aria-selected={false}
+                  on:click={() => onBranchSelect(b)}
+                >{b.name}</button>
+              {/each}
+            {/if}
           </div>
         {/if}
       </div>
@@ -189,6 +225,47 @@
   .branch-option.current {
     color: var(--accent-blue);
     font-weight: 600;
+  }
+
+  .branch-option.remote {
+    color: var(--text-secondary);
+    opacity: 0.85;
+  }
+
+  .fetch-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    width: 100%;
+    padding: 5px 10px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border-color);
+    border-radius: 0;
+    color: var(--text-secondary);
+    font-size: 11px;
+    cursor: pointer;
+    text-align: left;
+    margin-bottom: 2px;
+  }
+
+  .fetch-btn:hover:not(:disabled) {
+    color: var(--accent-blue);
+    background: var(--bg-tertiary);
+  }
+
+  .fetch-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .branch-group-label {
+    padding: 4px 10px 2px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
   }
 
   .right {

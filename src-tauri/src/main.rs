@@ -284,28 +284,97 @@ fn branch_diff_impl<'r>(
         .map_err(|e| e.to_string())
 }
 
+#[derive(Serialize, Clone)]
+struct BranchInfo {
+    name: String,
+    remote: Option<String>,
+}
+
 #[tauri::command]
-fn get_branch_list(state: State<AppState>) -> Result<Vec<String>, String> {
+fn get_branch_list(state: State<AppState>) -> Result<Vec<BranchInfo>, String> {
     let repo = get_repo(&state, None)?;
     let mut branches = Vec::new();
-    for branch in repo.branches(Some(git2::BranchType::Local)).map_err(|e| e.to_string())? {
-        let (branch, _) = branch.map_err(|e| e.to_string())?;
-        if let Some(name) = branch.name().map_err(|e| e.to_string())? {
-            branches.push(name.to_string());
+
+    // Local branches
+    for b in repo.branches(Some(git2::BranchType::Local)).map_err(|e| e.to_string())? {
+        let (b, _) = b.map_err(|e| e.to_string())?;
+        if let Some(name) = b.name().map_err(|e| e.to_string())? {
+            branches.push(BranchInfo { name: name.to_string(), remote: None });
         }
     }
+
+    // Remote tracking branches — skip HEAD symrefs
+    for b in repo.branches(Some(git2::BranchType::Remote)).map_err(|e| e.to_string())? {
+        let (b, _) = b.map_err(|e| e.to_string())?;
+        if let Some(full) = b.name().map_err(|e| e.to_string())? {
+            // full = "origin/branch-name"; skip "origin/HEAD"
+            if full.ends_with("/HEAD") { continue; }
+            let (remote, name) = full.split_once('/').unwrap_or(("", full));
+            branches.push(BranchInfo {
+                name: name.to_string(),
+                remote: Some(remote.to_string()),
+            });
+        }
+    }
+
     Ok(branches)
 }
 
 #[tauri::command]
-fn checkout_branch(state: State<AppState>, branch: String) -> Result<(), String> {
+fn fetch_remote(state: State<AppState>) -> Result<(), String> {
     let repo = get_repo(&state, None)?;
-    let obj = repo
-        .revparse_single(&format!("refs/heads/{}", branch))
-        .map_err(|e| format!("Branch '{}' not found: {}", branch, e))?;
-    repo.checkout_tree(&obj, None).map_err(|e| e.to_string())?;
-    repo.set_head(&format!("refs/heads/{}", branch))
+    let workdir = repo
+        .workdir()
+        .ok_or("bare repos not supported")?
+        .to_path_buf();
+    let output = std::process::Command::new("git")
+        .args(["-C", workdir.to_str().unwrap_or("."), "fetch", "--all", "--prune"])
+        .output()
         .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+#[tauri::command]
+fn checkout_branch(state: State<AppState>, branch: String, remote: Option<String>) -> Result<(), String> {
+    let repo = get_repo(&state, None)?;
+
+    if let Some(ref remote_name) = remote {
+        // Create a local tracking branch from the remote ref
+        let remote_ref = format!("refs/remotes/{}/{}", remote_name, branch);
+        let obj = repo
+            .revparse_single(&remote_ref)
+            .map_err(|e| format!("Remote branch '{}' not found: {}", remote_ref, e))?;
+        let commit = obj.peel_to_commit().map_err(|e| e.to_string())?;
+
+        // Create local branch (fail gracefully if it already exists)
+        let mut local_branch = match repo.branch(&branch, &commit, false) {
+            Ok(b) => b,
+            Err(_) => repo.find_branch(&branch, git2::BranchType::Local)
+                .map_err(|e| e.to_string())?,
+        };
+
+        // Set upstream tracking
+        let _ = local_branch.set_upstream(Some(&format!("{}/{}", remote_name, branch)));
+
+        let local_obj = repo
+            .revparse_single(&format!("refs/heads/{}", branch))
+            .map_err(|e| e.to_string())?;
+        repo.checkout_tree(&local_obj, None).map_err(|e| e.to_string())?;
+        repo.set_head(&format!("refs/heads/{}", branch))
+            .map_err(|e| e.to_string())?;
+    } else {
+        let obj = repo
+            .revparse_single(&format!("refs/heads/{}", branch))
+            .map_err(|e| format!("Branch '{}' not found: {}", branch, e))?;
+        repo.checkout_tree(&obj, None).map_err(|e| e.to_string())?;
+        repo.set_head(&format!("refs/heads/{}", branch))
+            .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }
 
@@ -840,6 +909,7 @@ fn main() {
             stage_file,
             unstage_file,
             get_branch_list,
+            fetch_remote,
             checkout_branch,
             get_branch_diff_files,
             get_branch_file_diff,

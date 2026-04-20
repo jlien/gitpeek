@@ -30,7 +30,7 @@
   }
 
   let repoInfo: RepoInfo | null = null;
-  let branches: string[] = [];
+  let branches: { name: string; remote: string | null }[] = [];
   let files: FileChange[] = [];
   let selectedFile: string | null = null;
   let diff: string = '';
@@ -81,10 +81,19 @@
     loading = false;
   }
 
-  async function handleCheckout(e: CustomEvent<string>) {
-    const branch = e.detail;
+  async function handleFetch() {
     try {
-      await invoke('checkout_branch', { branch });
+      await invoke('fetch_remote');
+      branches = await invoke('get_branch_list');
+    } catch (err) {
+      error = String(err);
+    }
+  }
+
+  async function handleCheckout(e: CustomEvent<{ branch: string; remote?: string }>) {
+    const { branch, remote } = e.detail;
+    try {
+      await invoke('checkout_branch', { branch, remote: remote ?? null });
       await loadRepo();
     } catch (err) {
       error = String(err);
@@ -327,6 +336,7 @@
     on:openFolder={openFolder}
     on:configure={() => showConfig = true}
     on:ask={() => { showAsk = true; }}
+    on:fetch={handleFetch}
     on:checkout={handleCheckout}
   />
 
