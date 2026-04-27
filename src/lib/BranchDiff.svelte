@@ -22,7 +22,8 @@
 
   async function loadBranches() {
     try {
-      branches = await invoke<string[]>('get_branch_list');
+      const raw = await invoke<{ name: string; remote: string | null }[]>('get_branch_list');
+      branches = raw.filter(b => !b.remote).map(b => b.name);
       if (!baseBranch) {
         baseBranch =
           branches.find(b => b === 'main') ??
